@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>量化交易系统 · CPO/科技基金监控</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <script src="/static/lib/echarts.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>📈 量化交易系统 <span class="sub">CPO / 科技基金监控 · 预测 · 决策</span></h1>
+    <div class="status-pills">
+      <span class="pill" id="pill-llm">大模型：检测中</span>
+      <span class="pill" id="pill-source">数据源：—</span>
+      <span class="pill live" id="pill-update">更新：—</span>
+      <span class="pill" id="pill-auto">自动刷新：开</span>
+    </div>
+    <button class="btn primary" id="btn-refresh">立即刷新</button>
+  </header>
+
+  <div class="layout">
+    <main>
+      <div class="section-title">多基金实时监控</div>
+      <div class="fund-grid" id="fund-grid"></div>
+
+      <div id="detail-wrap" style="margin-top:18px;"></div>
+    </main>
+
+    <aside class="news-feed">
+      <div class="section-title">财经快讯 · CPO/科技</div>
+      <div id="news-list"></div>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+:root {
+  --bg: #f4f6fa;
+  --card: #ffffff;
+  --line: #e6eaf0;
+  --text: #1f2733;
+  --muted: #8a94a6;
+  --accent: #2f6fed;
+  --up: #e5453b;      /* 涨：红 */
+  --down: #1fa971;    /* 跌：绿 */
+  --flat: #8a94a6;
+  --warn: #f5a623;
+  --shadow: 0 2px 10px rgba(31, 39, 51, .06);
+}
+* { box-sizing: border-box; }
+.focus-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px;
+  background: var(--up); color: #fff; font-size: 11px; font-weight: 600; vertical-align: middle;
+}
+body {
+  margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px;
+}
+header.topbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 22px; background: var(--card); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20; box-shadow: var(--shadow);
+}
+.topbar h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: .5px; }
+.topbar h1 .sub { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+.status-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.pill { font-size: 12px; padding: 4px 10px; border-radius: 20px; background: #eef2f8; color: var(--muted); }
+.pill.live { background: #e7f6ee; color: #1fa971; }
+.pill.real { background: #e8f0ff; color: var(--accent); }
+.pill.sim { background: #fff3e0; color: #c77700; }
+.btn {
+  border: 1px solid var(--line); background: #fff; color: var(--text);
+  padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: .15s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary:hover { opacity: .9; color:#fff; }
+
+.layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px 22px 40px; }
+@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+
+.section-title { font-size: 14px; font-weight: 700; margin: 4px 0 12px; display:flex; align-items:center; gap:8px;}
+.section-title::before { content:""; width:4px; height:14px; background:var(--accent); border-radius:2px; }
+
+/* 基金卡片网格 */
+.fund-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.fund-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+  cursor: pointer; transition: .15s; box-shadow: var(--shadow); position: relative; overflow: hidden;
+}
+.fund-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.fund-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(47,111,237,.15); }
+.fund-card .cat { font-size: 11px; color: var(--muted); }
+.fund-card .name { font-weight: 700; font-size: 15px; margin: 2px 0 2px; line-height: 1.3; }
+.fund-card .code { font-size: 12px; color: var(--muted); }
+.fund-card .nav-row { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; }
+.fund-card .nav { font-size: 22px; font-weight: 700; }
+.fund-card .chg { font-size: 14px; font-weight: 600; }
+.fund-card .est { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.fund-card .foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.badge { font-size: 11px; padding: 3px 8px; border-radius: 6px; font-weight: 600; }
+.badge.up { background: #fdecea; color: var(--up); }
+.badge.down { background: #e8f6ef; color: var(--down); }
+.badge.flat { background: #eef1f5; color: var(--flat); }
+.advice-chip { font-size: 12px; padding: 3px 9px; border-radius: 6px; background: #eef2f8; color: var(--accent); font-weight: 600; }
+.conf { font-size: 11px; color: var(--muted); }
+.dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+.dot.real{background:var(--accent);} .dot.sim{background:var(--warn);}
+
+/* 详情 */
+.detail { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; box-shadow: var(--shadow); }
+.detail .dhead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.detail .dhead h2 { margin:0; font-size:17px; }
+.detail .meta { font-size:12px; color:var(--muted); }
+.chart { width: 100%; height: 320px; margin-top: 10px; }
+.kpis { display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin-top:14px; }
+.kpi { background:#f7f9fc; border-radius:8px; padding:10px; text-align:center; }
+.kpi .k { font-size:11px; color:var(--muted); }
+.kpi .v { font-size:16px; font-weight:700; margin-top:3px; }
+.analysis { margin-top:16px; border-top:1px dashed var(--line); padding-top:14px; }
+.analysis .row { display:flex; gap:10px; margin:8px 0; align-items:flex-start; }
+.analysis .label { width:84px; color:var(--muted); font-size:13px; flex-shrink:0; }
+.analysis .val { font-size:13px; line-height:1.6; }
+.engine-tag { font-size:11px; padding:2px 8px; border-radius:6px; background:#eef2f8; color:var(--accent); }
+.news-feed { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); align-self: start; position: sticky; top: 76px; max-height: calc(100vh - 100px); overflow:auto;}
+.news-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.news-item:last-child { border-bottom: none; }
+.news-item .t { font-weight: 600; line-height: 1.5; font-size: 13.5px; }
+.news-item .m { font-size: 11px; color: var(--muted); margin-top: 5px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 5px; }
+.tag.rel { background:#eef2f8; color:var(--accent); }
+.tag.pos { background:#e8f6ef; color:var(--down); }   /* 利好=绿(中国习惯用绿代表利好? 这里用正面色) */
+.tag.neg { background:#fdecea; color:var(--up); }
+.tag.neu { background:#eef1f5; color:var(--flat); }
+.empty { color: var(--muted); text-align:center; padding:30px; }
+.loading { opacity:.5; }
+.toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:#1f2733; color:#fff; padding:10px 18px; border-radius:8px; font-size:13px; opacity:0; transition:.3s; pointer-events:none; z-index:50;}
+.toast.show { opacity:1; }
