@@ -55,6 +55,27 @@
     <!-- ============ TAB 1 监控总览 ============ -->
     <section class="tab-panel active" id="tab-overview">
       <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">历史净值走势<span class="sub">一眼掌控重点基金长期轨迹（可缩放时间轴）</span></span>
+          <div class="spacer"></div>
+          <div class="seg" id="ov-trend-range">
+            <button data-d="30">30日</button>
+            <button data-d="60">60日</button>
+            <button data-d="90">90日</button>
+            <button data-d="180">180日</button>
+            <button data-d="250" class="on">250日</button>
+            <button data-d="365">近1年</button>
+          </div>
+          <div class="seg" id="ov-trend-metric">
+            <button data-m="norm" class="on">归一化收益%</button>
+            <button data-m="nav">单位净值</button>
+          </div>
+        </div>
+        <div class="chips" id="ov-trend-funds" style="margin-bottom:10px"></div>
+        <div id="ov-trend-chart" class="chart"></div>
+      </div>
+
+      <div class="panel">
         <div class="kpi-strip" id="ov-kpis"></div>
       </div>
 

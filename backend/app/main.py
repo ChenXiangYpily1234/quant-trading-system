@@ -293,6 +293,39 @@ def compare(codes: str = Query(..., description="逗号分隔的基金代码"),
             "correlation": matrix}
 
 
+# ---------------- 批量历史净值（走势图数据源） ----------------
+@app.get("/api/history")
+def history(codes: str = Query(..., description="逗号分隔的基金代码"),
+            days: int = Query(120, ge=20, le=600)):
+    """返回多只基金的原始历史净值序列，供总览/走势图绘制（支持原始净值或归一化）。"""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()][:8]
+    if not code_list:
+        raise HTTPException(status_code=400, detail="请至少选择一只基金")
+    series = []
+    for code in code_list:
+        meta = watchlist.get(code) or fund_universe.get_info(code) or {"name": code}
+        entry = ensure_fund(code, days)
+        pts = _slice(entry, days)
+        if not pts:
+            continue
+        navs = [p.nav for p in pts]
+        series.append({
+            "code": code,
+            "name": meta.get("name", code),
+            "category": meta.get("category", "") if isinstance(meta, dict) else "",
+            "dates": [p.date for p in pts],
+            "navs": navs,
+            "acc_navs": [p.acc_nav for p in pts],
+            "change_pct": [p.change_pct for p in pts],
+            "source": entry["source"],
+        })
+    if not series:
+        raise HTTPException(status_code=404, detail="所选基金均无历史净值数据")
+    return {"days": days, "series": series,
+            "codes": [s["code"] for s in series],
+            "names": [s["name"] for s in series]}
+
+
 # ---------------- 策略回测 ----------------
 @app.get("/api/backtest/{code}")
 def run_backtest(code: str,

@@ -25,6 +25,7 @@ const S = {
   nw: { q: '', sent: '', tag: '', sort: 'relevance', data: null },
   pf: { data: null },
   bt: { data: null },
+  trend: { days: 250, metric: 'norm', funds: new Set(), loaded: false, data: null },
   interval: 15000, timer: null,
   alerts: JSON.parse(localStorage.getItem('qts_alerts') || '[]'),
   fired: [],
@@ -153,6 +154,111 @@ async function loadFunds(silent) {
   p.textContent = '数据源：' + (anyReal && !anySim ? '真实净值' : (!anyReal ? '模拟(降级)' : '真实+模拟'));
   p.className = 'pill ' + (anySim ? 'sim' : 'real');
   $('pill-update').textContent = '更新：' + new Date().toLocaleTimeString('zh-CN');
+  buildTrendChips();
+  if (!S.trend.loaded) loadTrend();
+}
+
+/* ---------------- 历史净值走势 ---------------- */
+const TREND_COLORS = ['#e5453b', '#2f6fed', '#16a34a', '#f59e0b', '#8b5cf6',
+                      '#06b6d4', '#ec4899', '#64748b'];
+
+function buildTrendChips() {
+  const box = $('ov-trend-funds');
+  if (!box) return;
+  // 首次进入：默认勾选重点基金
+  if (S.trend.funds.size === 0) {
+    S.funds.filter(f => f.focus).forEach(f => S.trend.funds.add(f.code));
+  }
+  // 仅保留仍存在于自选列表中的代码（被移出的不再展示/绘制）
+  S.trend.funds.forEach(c => { if (!S.funds.some(f => f.code === c)) S.trend.funds.delete(c); });
+  if (S.trend.funds.size === 0) S.funds.slice(0, 3).forEach(f => S.trend.funds.add(f.code));
+  box.innerHTML = S.funds.map(f =>
+    `<span class="chip ${S.trend.funds.has(f.code) ? 'on' : ''}" data-code="${f.code}">${f.focus ? '★ ' : ''}${esc(f.name)}</span>`).join('');
+}
+
+async function loadTrend() {
+  const codes = [...S.trend.funds];
+  const el = $('ov-trend-chart');
+  if (!codes.length) {
+    S.trend.loaded = true; S.trend.data = null;
+    if (el) el.innerHTML = '<div class="empty">请在上方勾选要查看的基金</div>';
+    return;
+  }
+  if (el) el.innerHTML = '<div class="loading">加载历史净值…</div>';
+  try {
+    const data = await api(`/api/history?codes=${codes.join(',')}&days=${S.trend.days}`);
+    S.trend.data = data;
+    S.trend.loaded = true;
+    renderTrendChart(data);
+  } catch (e) {
+    const c = $('ov-trend-chart');
+    if (c) c.innerHTML = `<div class="empty">走势加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderTrendChart(data) {
+  const el = $('ov-trend-chart');
+  if (!el) return;
+  el.innerHTML = '';
+  const inst = chart('ov-trend-chart');
+  if (!inst) return;
+  const norm = S.trend.metric === 'norm';
+  const x = data.series[0] ? data.series[0].dates : [];
+  const series = data.series.map((s, i) => {
+    const arr = norm
+      ? (() => { const base = s.navs[0] || 1; return s.navs.map(v => +((v / base - 1) * 100).toFixed(2)); })()
+      : s.navs;
+    return {
+      name: s.name, type: 'line', data: arr, smooth: true, showSymbol: false,
+      lineStyle: { width: 2 }, itemStyle: { color: TREND_COLORS[i % TREND_COLORS.length] },
+      emphasis: { focus: 'series' },
+    };
+  });
+  inst.setOption({
+    color: TREND_COLORS,
+    grid: { left: 54, right: 18, top: 38, bottom: 58 },
+    tooltip: Object.assign(tipBase(), {
+      valueFormatter: (v) => norm ? pct(v) : (v == null ? '—' : Number(v).toFixed(4)),
+    }),
+    legend: { top: 4, type: 'scroll', textStyle: { color: C().text, fontSize: 11 } },
+    xAxis: Object.assign({ type: 'category', data: x, boundaryGap: false }, axisBase()),
+    yAxis: Object.assign({
+      type: 'value', scale: true,
+      name: norm ? '累计收益 %' : '单位净值',
+      nameTextStyle: { color: C().muted, fontSize: 10 },
+    }, axisBase()),
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', height: 16, bottom: 16, start: 0, end: 100,
+        borderColor: C().split, textStyle: { color: C().muted, fontSize: 9 } },
+    ],
+    series,
+  }, true);
+}
+
+function wireTrend() {
+  const range = $('ov-trend-range');
+  if (range) range.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    S.trend.days = +b.dataset.d;
+    $$('#ov-trend-range button').forEach(x => x.classList.toggle('on', x === b));
+    loadTrend();
+  });
+  const metric = $('ov-trend-metric');
+  if (metric) metric.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    S.trend.metric = b.dataset.m;
+    $$('#ov-trend-metric button').forEach(x => x.classList.toggle('on', x === b));
+    if (S.trend.data) renderTrendChart(S.trend.data); else loadTrend();
+  });
+  const funds = $('ov-trend-funds');
+  if (funds) funds.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    const code = chip.dataset.code;
+    if (S.trend.funds.has(code)) S.trend.funds.delete(code); else S.trend.funds.add(code);
+    chip.classList.toggle('on', S.trend.funds.has(code));
+    loadTrend();
+  });
 }
 
 function filteredFunds() {
@@ -1214,6 +1320,10 @@ function setTab(name) {
   if (name === 'news') { loadNews(); loadSources(); }
   if (name === 'portfolio') loadPortfolio();
   if (name === 'backtest') { if (!S.bt.data) runBacktest(); else renderBacktest(); }
+  if (name === 'overview') {
+    if (!S.trend.loaded) loadTrend();
+    else setTimeout(() => { const c = chart('ov-trend-chart'); if (c) c.resize(); }, 60);
+  }
   setTimeout(() => Object.values(CH).forEach(c => c.resize()), 60);
 }
 $('tabs').addEventListener('click', (e) => {
@@ -1266,6 +1376,7 @@ $('btn-theme').onclick = () => {
   if (S.tab === 'news' && S.nw.data) renderNews();
   if (S.tab === 'portfolio' && S.pf.data) renderPortfolio();
   if (S.tab === 'backtest' && S.bt.data) renderBacktest();
+  if (S.tab === 'overview' && S.trend.data) renderTrendChart(S.trend.data);
 };
 
 document.addEventListener('keydown', (e) => {
@@ -1282,6 +1393,7 @@ window.addEventListener('resize', () => Object.values(CH).forEach(c => c.resize(
 /* ---------------- 启动 ---------------- */
 (async function init() {
   applyTheme();
+  wireTrend();
   await loadHealth();
   await loadFunds();
   startTimer();
