@@ -16,3 +16,12 @@ venv/
 
 # 环境变量
 .env
+
+# 运行时数据（自动生成 / 用户状态，不入库）
+backend/data/
+__pycache__/
+*.pyc
+
+# 本地服务进程文件
+*.pid
+.DS_Store

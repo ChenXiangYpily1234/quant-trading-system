@@ -1,19 +1,23 @@
 """
 新闻抓取模块
-- 优先抓取 config.NEWS_SOURCES 配置的 RSS / JSON 源
+- 抓取 config.NEWS_SOURCES + 用户在界面上自行添加的源（持久化 data/news_sources.json）
 - 全部失败或无配置时，回退到内置「示例资讯库」（CPO/科技主题，明确标注）
-- 对每条新闻做：相关度打分（关键词命中）、情感打分（正负面词典）
+- 对每条新闻做：相关度打分、情感打分、主题标签提取（供前端筛选）
+- 支持按关键词 / 情感 / 标签过滤
 """
 import time
 import html
+import urllib.parse
 import httpx
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-from . import config
+from . import config, store
 from .schemas import NewsItem, NewsList
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+SOURCES_FILE = "news_sources.json"
+SOURCE_TIMEOUT = 6
 
 POSITIVE = ["涨", "利好", "增长", "突破", "超预期", "上调", "看好", "受益",
             "订单", "扩产", "创新高", "大增", "回暖", "签约", "中标", "放量"]
@@ -21,45 +25,42 @@ NEGATIVE = ["跌", "利空", "下滑", "亏损", "下调", "风险", "制裁", "
             "跌破", "暴雷", "收紧", "承压", "回调", "终止", "诉讼", "库存"]
 
 
-# ---------------- 内置示例资讯（降级用，明确标注） ----------------
-def _sample_news() -> List[NewsItem]:
-    now = time.time()
-    H = 3600
-    samples = [
-        ("算力需求爆发，CPO光模块龙头订单饱满排产至明年", "多家云厂商上调资本开支，1.6T光模块渗透率加速，产业链景气度持续上行。"),
-        ("英伟达新一代AI芯片量产，带动光模块配套需求", "新一代GPU对高速互联要求提升，CPO（共封装光学）成为主流技术路线。"),
-        ("半导体板块异动，设备材料国产化提速", " wafer厂扩产叠加国产替代，半导体设备订单同比高增。"),
-        ("工信部：加快算力网络与数据中心绿色化建设", "政策加码智算中心，液冷、服务器、光模块迎来增量市场。"),
-        ("某5G通信ETF获资金净流入，机构看好通信估值修复", "通信板块估值处于历史低位，光模块业绩兑现驱动修复行情。"),
-        ("AI应用端活跃，机器人板块受关注", "人形机器人量产预期升温，相关TMT基金净值弹性增强。"),
-        ("风险提示：海外制裁升级或扰动半导体供应链", "部分标的出口受限，短期波动加大，建议控制仓位。"),
-        ("基金二季报披露：多只科技基金加仓算力产业链", "主动权益基金集中配置CPO、半导体，抱团趋势延续。"),
-        ("数据中心液冷渗透率提升，相关概念股走强", "高功耗AI服务器推动液冷方案普及，产业链公司订单可见度提升。"),
-        ("机构观点：科技成长仍是中期主线，但需警惕估值分化", "建议均衡配置，逢回调分批布局具备业绩支撑的标的。"),
-        ("北向资金今日净买入科技板块超20亿元", "外资回流成长股，半导体、通信设备获重点加仓。"),
-        ("某芯片公司发布超预期业绩，毛利率创历史新高", "AI相关收入占比提升，盈利能力显著改善。"),
-    ]
-    items = []
-    for i, (title, summary) in enumerate(samples):
-        items.append(NewsItem(
-            title=title,
-            link="#",
-            source="示例数据(内置)",
-            published=time.strftime("%Y-%m-%d %H:%M", time.localtime(now - i * 2 * H)),
-            summary=summary,
-            relevance=_relevance(title + summary),
-            sentiment=_sentiment(title + summary),
-        ))
-    return sorted(items, key=lambda x: x.relevance, reverse=True)
+# ---------------- 用户自定义新闻源（可在界面增删） ----------------
+def list_sources() -> List[Dict]:
+    return store.load(SOURCES_FILE, [])
 
 
-# ---------------- 打分 ----------------
+def add_source(name: str, url: str, stype: str = "rss") -> Dict:
+    if not url:
+        raise ValueError("新闻源地址不能为空")
+    data = list_sources()
+    if any(s["url"] == url for s in data):
+        raise ValueError("该新闻源已存在")
+    item = {"name": name or url[:30], "url": url, "type": stype}
+    data.append(item)
+    store.save(SOURCES_FILE, data)
+    return item
+
+
+def remove_source(url: str) -> bool:
+    data = list_sources()
+    left = [s for s in data if s["url"] != url]
+    if len(left) == len(data):
+        return False
+    store.save(SOURCES_FILE, left)
+    return True
+
+
+def _all_sources() -> List[Dict]:
+    return list(config.NEWS_SOURCES) + list_sources()
+
+
+# ---------------- 打分与标签 ----------------
 def _relevance(text: str) -> float:
     t = text.lower()
     score = 0.0
     for kw in config.NEWS_KEYWORDS:
         if kw.lower() in t:
-            # CPO/光模块/算力等核心词权重更高
             weight = 2.0 if kw.lower() in ("cpo", "光模块", "算力") else 1.0
             score += weight
     return min(score, 10.0)
@@ -74,30 +75,94 @@ def _sentiment(text: str) -> float:
     return round((pos - neg) / total, 2)
 
 
+def _tags(text: str) -> List[str]:
+    t = text.lower()
+    out = []
+    for kw in config.NEWS_KEYWORDS:
+        if kw.lower() in t:
+            out.append(kw)
+    return out[:5]
+
+
+def _search_link(title: str, tags: List[str]) -> str:
+    """内置示例资讯提供可点击的延伸检索链接（东方财富资讯搜索）。"""
+    kw = tags[0] if tags else title[:8]
+    return "https://so.eastmoney.com/news/s?keyword=" + urllib.parse.quote(kw)
+
+
+# ---------------- 内置示例资讯（降级用，明确标注） ----------------
+def _sample_news() -> List[NewsItem]:
+    now = time.time()
+    H = 3600
+    samples = [
+        ("算力需求爆发，CPO光模块龙头订单饱满排产至明年", "多家云厂商上调资本开支，1.6T光模块渗透率加速，产业链景气度持续上行。"),
+        ("英伟达新一代AI芯片量产，带动光模块配套需求", "新一代GPU对高速互联要求提升，CPO（共封装光学）成为主流技术路线。"),
+        ("半导体板块异动，设备材料国产化提速", "wafer厂扩产叠加国产替代，半导体设备订单同比高增。"),
+        ("工信部：加快算力网络与数据中心绿色化建设", "政策加码智算中心，液冷、服务器、光模块迎来增量市场。"),
+        ("某5G通信ETF获资金净流入，机构看好通信估值修复", "通信板块估值处于历史低位，光模块业绩兑现驱动修复行情。"),
+        ("AI应用端活跃，机器人板块受关注", "人形机器人量产预期升温，相关TMT基金净值弹性增强。"),
+        ("风险提示：海外制裁升级或扰动半导体供应链", "部分标的出口受限，短期波动加大，建议控制仓位。"),
+        ("基金二季报披露：多只科技基金加仓算力产业链", "主动权益基金集中配置CPO、半导体，抱团趋势延续。"),
+        ("数据中心液冷渗透率提升，相关概念股走强", "高功耗AI服务器推动液冷方案普及，产业链公司订单可见度提升。"),
+        ("机构观点：科技成长仍是中期主线，但需警惕估值分化", "建议均衡配置，逢回调分批布局具备业绩支撑的标的。"),
+        ("北向资金今日净买入科技板块超20亿元", "外资回流成长股，半导体、通信设备获重点加仓。"),
+        ("某芯片公司发布超预期业绩，毛利率创历史新高", "AI相关收入占比提升，盈利能力显著改善。"),
+    ]
+    items = []
+    for i, (title, summary) in enumerate(samples):
+        txt = title + summary
+        tags = _tags(txt)
+        items.append(NewsItem(
+            title=title,
+            link=_search_link(title, tags),
+            source="示例数据(内置)",
+            published=time.strftime("%Y-%m-%d %H:%M", time.localtime(now - i * 2 * H)),
+            summary=summary,
+            relevance=_relevance(txt),
+            sentiment=_sentiment(txt),
+            tags=tags,
+        ))
+    return sorted(items, key=lambda x: x.relevance, reverse=True)
+
+
 # ---------------- 真实源抓取 ----------------
+def _mk(title, link, source, published, summary) -> NewsItem:
+    txt = title + " " + (summary or "")
+    return NewsItem(
+        title=html.unescape(title),
+        link=link or "#",
+        source=source,
+        published=published,
+        summary=html.unescape(summary or "")[:200],
+        relevance=_relevance(txt),
+        sentiment=_sentiment(txt),
+        tags=_tags(txt),
+    )
+
+
 def _fetch_rss(url: str, name: str) -> List[NewsItem]:
     items: List[NewsItem] = []
-    with httpx.Client(timeout=config.REQUEST_TIMEOUT, headers={"User-Agent": UA}) as c:
+    with httpx.Client(timeout=SOURCE_TIMEOUT, headers={"User-Agent": UA},
+                      follow_redirects=True) as c:
         r = c.get(url)
     if r.status_code != 200:
         return items
     root = ET.fromstring(r.content)
-    # RSS
     for item in root.iter("item"):
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
         desc = (item.findtext("description") or "").strip()
-        pub = item.findtext("pubDate") or item.findtext("dc:date", namespaces={"dc": "http://purl.org/dc/elements/1.1/"})
+        pub = item.findtext("pubDate")
         if title:
             items.append(_mk(title, link, name, pub, desc))
-    # Atom
     if not items:
-        for entry in root.iter("{http://www.w3.org/2005/Atom}entry"):
-            title = (entry.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-            link_el = entry.find("{http://www.w3.org/2005/Atom}link")
+        ns = "{http://www.w3.org/2005/Atom}"
+        for entry in root.iter(ns + "entry"):
+            title = (entry.findtext(ns + "title") or "").strip()
+            link_el = entry.find(ns + "link")
             link = link_el.get("href") if link_el is not None else ""
-            summary = (entry.findtext("{http://www.w3.org/2005/Atom}summary") or "").strip()
-            pub = entry.findtext("{http://www.w3.org/2005/Atom}updated")
+            summary = (entry.findtext(ns + "summary") or "").strip()
+            pub = entry.findtext(ns + "updated")
             if title:
                 items.append(_mk(title, link, name, pub, summary))
     return items
@@ -105,7 +170,8 @@ def _fetch_rss(url: str, name: str) -> List[NewsItem]:
 
 def _fetch_api(url: str, name: str, json_map: Dict[str, str]) -> List[NewsItem]:
     items: List[NewsItem] = []
-    with httpx.Client(timeout=config.REQUEST_TIMEOUT, headers={"User-Agent": UA}) as c:
+    with httpx.Client(timeout=SOURCE_TIMEOUT, headers={"User-Agent": UA},
+                      follow_redirects=True) as c:
         r = c.get(url)
     if r.status_code != 200:
         return items
@@ -127,46 +193,70 @@ def _fetch_api(url: str, name: str, json_map: Dict[str, str]) -> List[NewsItem]:
     return items
 
 
-def _mk(title, link, source, published, summary) -> NewsItem:
-    txt = title + " " + summary
-    return NewsItem(
-        title=html.unescape(title),
-        link=link,
-        source=source,
-        published=published,
-        summary=html.unescape(summary)[:200],
-        relevance=_relevance(txt),
-        sentiment=_sentiment(txt),
-    )
-
-
-def get_news(limit: int = 20) -> NewsList:
+def get_news(limit: int = 30) -> NewsList:
     items: List[NewsItem] = []
-    source_note = "实时抓取"
-    try:
-        for src in config.NEWS_SOURCES:
-            try:
-                if src.get("type") == "rss":
-                    items.extend(_fetch_rss(src["url"], src.get("name", "RSS")))
-                elif src.get("type") == "api":
-                    items.extend(_fetch_api(src["url"], src.get("name", "API"), src.get("json_map", {})))
-            except Exception:
-                continue
-    except Exception:
-        items = []
+    ok_sources, failed_sources = [], []
+    for src in _all_sources()[:6]:
+        try:
+            if src.get("type") == "api":
+                got = _fetch_api(src["url"], src.get("name", "API"), src.get("json_map", {}))
+            else:
+                got = _fetch_rss(src["url"], src.get("name", "RSS"))
+            if got:
+                items.extend(got)
+                ok_sources.append(src.get("name", src["url"]))
+            else:
+                failed_sources.append(src.get("name", src["url"]))
+        except Exception:
+            failed_sources.append(src.get("name", src["url"]))
 
-    if not items:
+    if items:
+        source_note = "实时抓取：" + "、".join(ok_sources)
+        if failed_sources:
+            source_note += f"（{len(failed_sources)} 个源失败）"
+    else:
         items = _sample_news()
-        source_note = "内置示例数据（未配置/无法访问外部新闻源，可在 config.NEWS_SOURCES 中接入真实源）"
+        source_note = "内置示例资讯（尚未接入可用新闻源，可在「新闻中心」右上角添加 RSS 源）"
 
-    # 去重 + 按相关度排序
     seen = set()
-    unique = []
+    unique: List[NewsItem] = []
     for it in items:
-        key = it.title
-        if key in seen:
+        if it.title in seen:
             continue
-        seen.add(key)
+        seen.add(it.title)
         unique.append(it)
     unique.sort(key=lambda x: (x.relevance, x.sentiment), reverse=True)
-    return NewsList(items=unique[:limit], total=len(unique), source_note=source_note)
+
+    all_tags = sorted({t for it in unique for t in it.tags})
+    return NewsList(items=unique[:limit], total=len(unique),
+                    source_note=source_note, tags=all_tags)
+
+
+def filter_news(nl: NewsList, q: Optional[str] = None, sentiment: Optional[str] = None,
+                tag: Optional[str] = None, sort: str = "relevance",
+                limit: int = 30) -> NewsList:
+    """按关键词 / 情感 / 标签过滤与排序（前端交互驱动）。"""
+    items = list(nl.items)
+    if q:
+        ql = q.lower()
+        items = [i for i in items if ql in i.title.lower() or ql in (i.summary or "").lower()]
+    if tag:
+        items = [i for i in items if tag in i.tags]
+    if sentiment == "pos":
+        items = [i for i in items if i.sentiment > 0.1]
+    elif sentiment == "neg":
+        items = [i for i in items if i.sentiment < -0.1]
+    elif sentiment == "neu":
+        items = [i for i in items if -0.1 <= i.sentiment <= 0.1]
+
+    if sort == "sentiment":
+        items.sort(key=lambda x: x.sentiment, reverse=True)
+    elif sort == "risk":
+        items.sort(key=lambda x: x.sentiment)
+    elif sort == "time":
+        items.sort(key=lambda x: (x.published or ""), reverse=True)
+    else:
+        items.sort(key=lambda x: (x.relevance, x.sentiment), reverse=True)
+
+    return NewsList(items=items[:limit], total=len(items),
+                    source_note=nl.source_note, tags=nl.tags)

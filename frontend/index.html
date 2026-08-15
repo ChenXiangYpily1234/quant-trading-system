@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,31 +8,320 @@
   <script src="/static/lib/echarts.min.js"></script>
 </head>
 <body>
+  <!-- ============ 顶栏 ============ -->
   <header class="topbar">
-    <h1>📈 量化交易系统 <span class="sub">CPO / 科技基金监控 · 预测 · 决策</span></h1>
-    <div class="status-pills">
-      <span class="pill" id="pill-llm">大模型：检测中</span>
-      <span class="pill" id="pill-source">数据源：—</span>
-      <span class="pill live" id="pill-update">更新：—</span>
-      <span class="pill" id="pill-auto">自动刷新：开</span>
+    <div class="brand">📈 量化交易系统<span>CPO / 科技基金 · 监控 预测 决策</span></div>
+
+    <div class="search-wrap">
+      <input id="fund-search" placeholder="搜索并添加基金：代码 / 名称 / 拼音（如 005844、人工智能、HTCX）" autocomplete="off" />
+      <div class="suggest" id="suggest"></div>
     </div>
-    <button class="btn primary" id="btn-refresh">立即刷新</button>
+
+    <div class="top-actions">
+      <select class="sel" id="interval-select" title="自动刷新间隔">
+        <option value="0">手动刷新</option>
+        <option value="10000">10 秒</option>
+        <option value="15000" selected>15 秒</option>
+        <option value="30000">30 秒</option>
+        <option value="60000">60 秒</option>
+      </select>
+      <button class="btn primary" id="btn-refresh" title="快捷键 R">立即刷新</button>
+      <button class="btn icon bell" id="btn-alerts" title="价格提醒">🔔<span class="cnt" id="alert-count">0</span></button>
+      <button class="btn icon" id="btn-theme" title="切换深浅色">🌙</button>
+    </div>
   </header>
 
-  <div class="layout">
-    <main>
-      <div class="section-title">多基金实时监控</div>
-      <div class="fund-grid" id="fund-grid"></div>
+  <!-- ============ 标签页 ============ -->
+  <nav class="tabs" id="tabs">
+    <button data-tab="overview" class="active">监控总览<span class="kbd">1</span></button>
+    <button data-tab="detail">详情分析<span class="kbd">2</span></button>
+    <button data-tab="compare">多基金对比<span class="kbd">3</span></button>
+    <button data-tab="news">新闻中心<span class="kbd">4</span></button>
+    <button data-tab="portfolio">我的持仓<span class="kbd">5</span></button>
+    <button data-tab="backtest">策略回测<span class="kbd">6</span></button>
+  </nav>
 
-      <div id="detail-wrap" style="margin-top:18px;"></div>
-    </main>
-
-    <aside class="news-feed">
-      <div class="section-title">财经快讯 · CPO/科技</div>
-      <div id="news-list"></div>
-    </aside>
+  <!-- ============ 状态条 ============ -->
+  <div class="statusbar">
+    <span class="pill" id="pill-llm">大模型：检测中</span>
+    <span class="pill" id="pill-source">数据源：—</span>
+    <span class="pill live" id="pill-update">更新：—</span>
+    <span class="pill" id="pill-universe">基金库：—</span>
+    <span class="pill clickable" id="pill-reset" title="恢复默认自选列表">恢复默认自选</span>
+    <span class="pill" id="pill-hint" style="margin-left:auto">快捷键：R 刷新 · 1-6 切换页签 · / 搜索</span>
   </div>
 
+  <div class="wrap">
+    <!-- ============ TAB 1 监控总览 ============ -->
+    <section class="tab-panel active" id="tab-overview">
+      <div class="panel">
+        <div class="kpi-strip" id="ov-kpis"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">多基金实时监控<span class="sub" id="ov-count"></span></span>
+          <div class="spacer"></div>
+          <div class="chips" id="ov-filters">
+            <span class="chip on" data-f="all">全部</span>
+            <span class="chip" data-f="focus">★ 重点</span>
+            <span class="chip" data-f="up">看多</span>
+            <span class="chip" data-f="down">看空</span>
+            <span class="chip" data-f="add">建议加仓</span>
+            <span class="chip" data-f="held">已持仓</span>
+          </div>
+          <select class="sel" id="ov-sort">
+            <option value="focus">排序：重点优先</option>
+            <option value="day">排序：当日涨幅</option>
+            <option value="ret20">排序：20日涨幅</option>
+            <option value="pred">排序：预测幅度</option>
+            <option value="conf">排序：置信度</option>
+            <option value="name">排序：名称</option>
+          </select>
+          <div class="seg" id="ov-view">
+            <button data-v="card" class="on">卡片</button>
+            <button data-v="table">表格</button>
+          </div>
+        </div>
+        <div id="ov-body"><div class="loading">加载基金数据</div></div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 2 详情分析 ============ -->
+    <section class="tab-panel" id="tab-detail">
+      <div class="panel">
+        <div class="panel-head">
+          <select class="sel" id="dt-fund"></select>
+          <div class="seg" id="dt-range">
+            <button data-d="20">20日</button>
+            <button data-d="60" class="on">60日</button>
+            <button data-d="120">120日</button>
+            <button data-d="250">250日</button>
+          </div>
+          <div class="chips" id="dt-inds">
+            <span class="chip on" data-i="ma5">MA5</span>
+            <span class="chip on" data-i="ma20">MA20</span>
+            <span class="chip" data-i="ma60">MA60</span>
+            <span class="chip" data-i="boll">BOLL</span>
+            <span class="chip on" data-i="pred">预测带</span>
+          </div>
+          <select class="sel" id="dt-sub">
+            <option value="macd">副图：MACD</option>
+            <option value="rsi">副图：RSI</option>
+            <option value="kdj">副图：KDJ</option>
+            <option value="none">副图：无</option>
+          </select>
+          <div class="spacer"></div>
+          <button class="btn sm" id="dt-ai">🤖 重新研判</button>
+          <button class="btn sm" id="dt-hold">＋ 加入持仓</button>
+          <button class="btn sm" id="dt-csv">⬇ 导出CSV</button>
+          <button class="btn sm" id="dt-fs">⛶ 全屏</button>
+        </div>
+        <div id="dt-chart" class="chart"></div>
+        <div id="dt-sub-chart" class="chart sm"></div>
+      </div>
+      <div class="cols-2">
+        <div class="panel">
+          <div class="panel-title" style="margin-bottom:10px">区间业绩与技术指标</div>
+          <div class="kpi-strip" id="dt-kpis"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title" style="margin-bottom:10px">研判与操作建议</div>
+          <div id="dt-analysis"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 3 多基金对比 ============ -->
+    <section class="tab-panel" id="tab-compare">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">选择基金对比<span class="sub">点击基金标签选择，最多 8 只</span></span>
+          <div class="spacer"></div>
+          <select class="sel" id="cmp-days">
+            <option value="20">区间：20日</option>
+            <option value="60" selected>区间：60日</option>
+            <option value="120">区间：120日</option>
+            <option value="250">区间：250日</option>
+          </select>
+          <button class="btn sm" id="cmp-all">全选</button>
+          <button class="btn sm" id="cmp-none">清空</button>
+          <button class="btn primary sm" id="cmp-run">运行对比</button>
+        </div>
+        <div class="chips" id="cmp-picker"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:8px">归一化收益对比（%）</div>
+        <div id="cmp-chart" class="chart"></div>
+      </div>
+      <div class="cols-2">
+        <div class="panel">
+          <div class="panel-title" style="margin-bottom:10px">区间业绩排行</div>
+          <div class="table-wrap" id="cmp-stats"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title" style="margin-bottom:10px">相关性矩阵<span class="sub">数值越高，同涨同跌越明显（分散配置参考）</span></div>
+          <div id="cmp-corr" class="chart md"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 4 新闻中心 ============ -->
+    <section class="tab-panel" id="tab-news">
+      <div class="news-cols">
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">财经快讯<span class="sub" id="news-note"></span></span>
+            <div class="spacer"></div>
+            <input class="inp" id="news-q" placeholder="搜索标题/摘要" style="width:150px" />
+            <div class="chips" id="news-sent">
+              <span class="chip on" data-s="">全部</span>
+              <span class="chip" data-s="pos">利好</span>
+              <span class="chip" data-s="neg">利空</span>
+              <span class="chip" data-s="neu">中性</span>
+            </div>
+            <select class="sel" id="news-sort">
+              <option value="relevance">按相关度</option>
+              <option value="sentiment">按利好度</option>
+              <option value="risk">按风险度</option>
+              <option value="time">按时间</option>
+            </select>
+          </div>
+          <div class="chips" id="news-tags" style="margin-bottom:10px"></div>
+          <div class="news-list" id="news-list"><div class="loading">加载资讯</div></div>
+        </div>
+        <div>
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-title">新闻源</span>
+              <div class="spacer"></div>
+              <button class="btn sm primary" id="src-add">＋ 添加 RSS</button>
+            </div>
+            <div id="src-list"></div>
+            <div class="hint" style="margin-top:8px">接入你自己的 RSS/接口后，系统将用真实资讯参与大模型研判。</div>
+          </div>
+          <div class="panel">
+            <div class="panel-title" style="margin-bottom:8px">情绪概览</div>
+            <div id="news-mood" class="chart sm"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 5 我的持仓 ============ -->
+    <section class="tab-panel" id="tab-portfolio">
+      <div class="panel">
+        <div class="kpi-strip" id="pf-kpis"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">添加 / 修改持仓</span>
+        </div>
+        <div class="form-row">
+          <div class="field" style="min-width:230px">
+            <label>基金</label>
+            <select class="sel" id="pf-code"></select>
+          </div>
+          <div class="field">
+            <label>持有份额</label>
+            <input class="inp" id="pf-shares" type="number" step="0.01" placeholder="如 1000" />
+          </div>
+          <div class="field">
+            <label>成本净值</label>
+            <input class="inp" id="pf-cost" type="number" step="0.0001" placeholder="如 3.2100" />
+          </div>
+          <button class="btn primary" id="pf-save">保存持仓</button>
+          <span class="hint" id="pf-hint"></span>
+        </div>
+      </div>
+      <div class="cols-2">
+        <div class="panel">
+          <div class="panel-title" style="margin-bottom:10px">持仓明细<span class="sub">点击行可编辑</span></div>
+          <div class="table-wrap" id="pf-table"></div>
+        </div>
+        <div>
+          <div class="panel">
+            <div class="panel-title" style="margin-bottom:8px">持仓分布</div>
+            <div id="pf-pie" class="chart sm"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title" style="margin-bottom:8px">组合建议分布（按市值权重）</div>
+            <div id="pf-advice" class="chart sm"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 6 策略回测 ============ -->
+    <section class="tab-panel" id="tab-backtest">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">策略参数</span>
+          <div class="spacer"></div>
+          <span class="hint">信号 T 日生成、T+1 日按净值成交，已扣交易费用</span>
+        </div>
+        <div class="form-row">
+          <div class="field" style="min-width:210px">
+            <label>基金</label>
+            <select class="sel" id="bt-code"></select>
+          </div>
+          <div class="field">
+            <label>策略</label>
+            <select class="sel" id="bt-strategy">
+              <option value="ma_cross">双均线交叉</option>
+              <option value="momentum">动量策略</option>
+              <option value="buy_hold">买入持有</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:96px">
+            <label>短周期</label>
+            <input class="inp" id="bt-short" type="number" value="5" min="2" max="120" />
+          </div>
+          <div class="field" style="min-width:96px">
+            <label>长周期</label>
+            <input class="inp" id="bt-long" type="number" value="20" min="3" max="250" />
+          </div>
+          <div class="field" style="min-width:110px">
+            <label>回测区间</label>
+            <select class="sel" id="bt-days">
+              <option value="120">120日</option>
+              <option value="250" selected>250日</option>
+              <option value="400">400日</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:100px">
+            <label>单边费率(bp)</label>
+            <input class="inp" id="bt-fee" type="number" value="15" min="0" max="200" />
+          </div>
+          <button class="btn primary" id="bt-run">运行回测</button>
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <span class="hint">快捷预设：</span>
+          <span class="chip" data-preset="5,20">MA5/20</span>
+          <span class="chip" data-preset="10,30">MA10/30</span>
+          <span class="chip" data-preset="20,60">MA20/60</span>
+          <span class="chip" data-preset="5,60">MA5/60</span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="kpi-strip" id="bt-kpis"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:8px">资金曲线 vs 买入持有</div>
+        <div id="bt-chart" class="chart"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:10px">交易明细</div>
+        <div class="table-wrap" id="bt-trades"></div>
+      </div>
+    </section>
+
+    <div class="disclaimer">
+      本系统的预测与建议由技术指标、新闻情感与模型研判生成，仅供研究参考，<b>不构成投资建议</b>。基金投资有风险，决策请独立判断。
+    </div>
+  </div>
+
+  <div id="layer"></div>
   <div class="toast" id="toast"></div>
   <script src="/static/js/app.js"></script>
 </body>

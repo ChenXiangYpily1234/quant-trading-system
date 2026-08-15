@@ -24,7 +24,13 @@ class FundSummary(BaseModel):
     direction: Optional[str] = None            # 预测方向 up/down/flat
     confidence: Optional[float] = None         # 预测置信度 0-1
     advice: Optional[str] = None               # 操作建议
+    position_action: Optional[str] = None      # 仓位动作
+    risk_level: Optional[str] = None           # 风险等级
+    predicted_change_pct: Optional[float] = None
+    return_20d: Optional[float] = None         # 近20日涨幅%
+    sparkline: List[float] = []                # 迷你走势（近30点）
     data_source: str = "unknown"               # real / simulated
+    held: bool = False                         # 是否已在持仓中
 
 
 class FundDetail(BaseModel):
@@ -34,9 +40,13 @@ class FundDetail(BaseModel):
     note: Optional[str] = None
     focus: bool = False              # 是否为重点关注基金
     data_source: str
+    latest_date: Optional[str] = None
+    days: int = 0
     history: List[NavPoint]
     ma5: List[Optional[float]]
     ma20: List[Optional[float]]
+    indicators: Dict[str, Any] = {}   # ma10/ma60/boll/macd/kdj/rsi 序列
+    stats: Dict[str, Any] = {}        # 区间业绩统计
     prediction: Dict[str, Any]
     recommendation: Dict[str, Any]
     sentiment: Dict[str, Any]
@@ -50,12 +60,14 @@ class NewsItem(BaseModel):
     summary: str = ""
     relevance: float = 0.0     # 相关度打分
     sentiment: float = 0.0      # 情感得分 -1~1
+    tags: List[str] = []        # 命中的主题关键词
 
 
 class NewsList(BaseModel):
     items: List[NewsItem]
     total: int
     source_note: str
+    tags: List[str] = []        # 全部可用标签（供前端筛选）
 
 
 class AnalysisResult(BaseModel):
@@ -72,3 +84,18 @@ class AnalysisResult(BaseModel):
     risk_level: str            # 低/中/高
     reasoning: str
     key_news: List[str] = []
+
+
+# ---------- 请求体 ----------
+class AddFundRequest(BaseModel):
+    code: str
+    category: Optional[str] = None
+    note: Optional[str] = None
+    focus: bool = False
+
+
+class HoldingRequest(BaseModel):
+    code: str
+    shares: float
+    cost_nav: float
+    name: Optional[str] = ""
