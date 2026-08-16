@@ -25,6 +25,8 @@ const S = {
   nw: { q: '', sent: '', tag: '', sort: 'relevance', data: null },
   pf: { data: null },
   bt: { data: null },
+  dca: { data: null },
+  reb: { data: null, method: 'risk_parity' },
   trend: { days: 250, metric: 'norm', funds: new Set(), loaded: false, data: null },
   interval: 15000, timer: null,
   alerts: JSON.parse(localStorage.getItem('qts_alerts') || '[]'),
@@ -45,6 +47,13 @@ function dirBadge(dir) {
   if (dir === 'up') return '<span class="badge up">看多 ↗</span>';
   if (dir === 'down') return '<span class="badge down">看空 ↘</span>';
   return '<span class="badge flat">震荡 →</span>';
+}
+
+// 估值温度配色：低估(冷)蓝 · 适中灰 · 高估(热)红
+function valColor(label) {
+  if (label === '低估') return '#2f6fed';
+  if (label === '高估') return '#e5453b';
+  return '#94a3b8';
 }
 
 let toastTimer = null;
@@ -329,6 +338,7 @@ function fundCardHtml(f) {
     <div class="foot">
       ${dirBadge(f.direction)}
       <span class="advice-chip">${esc(f.advice || '—')}</span>
+      ${f.valuation ? `<span class="val-badge" style="color:${valColor(f.valuation.label)};border-color:${valColor(f.valuation.label)}">估值·${esc(f.valuation.label)} ${f.valuation.temp}</span>` : ''}
       <span class="conf" style="margin-left:auto">置信 ${Math.round((f.confidence || 0) * 100)}%</span>
     </div>
   </div>`;
@@ -468,7 +478,7 @@ $('ov-view').addEventListener('click', (e) => {
  * ======================================================= */
 function syncFundSelectors() {
   const opts = S.funds.map(f => `<option value="${f.code}">${f.focus ? '★ ' : ''}${esc(f.name)} (${f.code})</option>`).join('');
-  ['dt-fund', 'bt-code'].forEach(id => {
+  ['dt-fund', 'bt-code', 'dca-code'].forEach(id => {
     const el = $(id); if (!el) return;
     const cur = el.value;
     el.innerHTML = opts;
@@ -626,6 +636,9 @@ function renderDetailKpis() {
     ['最大回撤', pct(st.max_drawdown), C().down],
     ['年化波动', pct(st.volatility), ''],
     ['夏普比率', (st.sharpe ?? '—'), (st.sharpe > 1 ? C().up : '')],
+    ['索提诺比率', (st.sortino ?? '—'), (st.sortino > 1 ? C().up : '')],
+    ['卡玛比率', (st.calmar ?? '—'), (st.calmar > 1 ? C().up : '')],
+    ['下行波动', pct(st.downside_dev), ''],
     ['上涨天数占比', (st.win_rate ?? '—') + '%', ''],
     ['近5日动量', pct(ind.momentum5), colorFor(ind.momentum5)],
     ['近20日动量', pct(ind.momentum20), colorFor(ind.momentum20)],
@@ -645,7 +658,7 @@ function renderAnalysis(rec, d) {
         <span class="hint">最新净值日 ${d.latest_date || '—'} · 样本 ${d.days} 交易日</span></span></div>
       <div class="row"><span class="label">研判引擎</span><span class="val"><span class="engine-tag">${rec.engine === 'llm' ? '大模型 LLM' : '规则引擎(内置)'}</span>
         <span class="hint">生成于 ${esc(rec.generated_at || '')}</span></span></div>
-      <div class="row"><span class="label">走势预测</span><span class="val">${esc(rec.trend_prediction)}
+      <div class="row"><span class="label">走势预测</span><span class="val">${esc(rec.trend_prediction)}${d.valuation ? ` · <b style="color:${valColor(d.valuation.label)}">估值·${esc(d.valuation.label)}</b>（温度 ${d.valuation.temp}，净值处历史 ${d.valuation.nav_pct_rank}% 分位，相对长期均线 ${d.valuation.ma_ratio})` : ''}
         ${rec.predicted_nav ? ` · 目标净值 <b>${fmt(rec.predicted_nav)}</b> (<span style="color:${colorFor(rec.predicted_change_pct)}">${pct(rec.predicted_change_pct)}</span>)` : ''}
         · 置信 <b>${Math.round((rec.confidence || 0) * 100)}%</b></span></div>
       <div class="row"><span class="label">操作建议</span><span class="val">
@@ -1144,6 +1157,113 @@ $('bt-strategy').onchange = (e) => {
   $('bt-long').disabled = isBH || isMom;
   $('bt-short').parentElement.querySelector('label').textContent = isMom ? '回看周期' : '短周期';
 };
+
+/* ---------------- 定投回测 ---------------- */
+function runDca() {
+  const code = $('dca-code').value || ($('bt-code') && $('bt-code').value) || (S.funds[0] && S.funds[0].code);
+  if (!code) return toast('请先添加基金', 'err');
+  const p = new URLSearchParams({
+    strategy: $('dca-strategy').value,
+    freq: $('dca-freq').value,
+    amount: $('dca-amount').value,
+    fee_bps: $('dca-fee').value,
+    days: $('dca-days').value,
+  });
+  $('dca-kpis').innerHTML = '<div class="loading">定投回测计算</div>';
+  api(`/api/dca/${code}?${p.toString()}`).then(d => {
+    S.dca.data = d;
+    renderDca();
+    toast(`定投回测完成：${d.strategy_name} 收益 ${pct(d.total_return_pct)}`, 'ok');
+  }).catch(e => { $('dca-kpis').innerHTML = `<div class="empty">定投回测失败：${esc(e.message)}</div>`; });
+}
+
+function renderDca() {
+  const d = S.dca.data; if (!d) return;
+  $('dca-kpis').innerHTML = [
+    ['策略', d.strategy_name],
+    ['定投期数', d.periods],
+    ['累计本金', '¥' + (d.principal || 0).toLocaleString()],
+    ['期末市值', '¥' + (d.final_value || 0).toLocaleString()],
+    ['总收益率', pct(d.total_return_pct), colorFor(d.total_return_pct)],
+    ['资金加权年化(XIRR)', pct(d.xirr_pct), ''],
+    ['区间', `${d.first_date} ~ ${d.last_date}`],
+  ].map(([k, v, col]) => `<div class="kpi"><div class="k">${k}</div><div class="v" style="color:${col || 'inherit'};font-size:15px">${v}</div></div>`).join('');
+
+  chart('dca-chart').setOption({
+    animation: false,
+    tooltip: { ...tipBase(), valueFormatter: (v) => v == null ? '—' : '¥' + Number(v).toLocaleString() },
+    legend: { top: 0, right: 0, textStyle: { fontSize: 11, color: C().muted } },
+    grid: { left: 62, right: 18, top: 32, bottom: 42 },
+    xAxis: { type: 'category', data: d.dates, boundaryGap: false, ...axisBase() },
+    yAxis: [
+      { type: 'value', scale: true, name: '市值/成本', axisLabel: { formatter: (v) => '¥' + (v / 1000).toFixed(0) + 'k', fontSize: 10, color: C().muted }, axisLine: { lineStyle: { color: C().split } }, splitLine: { lineStyle: { color: C().split } } },
+      { type: 'value', name: '净值', scale: true, position: 'right', axisLabel: { fontSize: 10, color: C().muted }, axisLine: { lineStyle: { color: C().split } }, splitLine: { show: false } },
+    ],
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 15, bottom: 6, borderColor: C().split, textStyle: { fontSize: 9, color: C().muted } }],
+    series: [
+      { name: '定投市值', type: 'line', data: d.value_series, smooth: true, symbol: 'none',
+        lineStyle: { width: 2.2, color: C().accent },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: theme === 'dark' ? 'rgba(77,134,255,.24)' : 'rgba(47,111,237,.16)' },
+          { offset: 1, color: 'rgba(47,111,237,0)' }]) } },
+      { name: '累计投入成本', type: 'line', data: d.cost_series, smooth: true, symbol: 'none',
+        lineStyle: { width: 1.6, color: C().muted, type: 'dashed' } },
+      { name: '单位净值', type: 'line', yAxisIndex: 1, data: d.nav_series, smooth: true, symbol: 'none',
+        lineStyle: { width: 1.2, color: C().up, opacity: 0.7 } },
+    ],
+  }, true);
+}
+$('dca-run').onclick = runDca;
+
+/* ---------------- 组合再平衡 ---------------- */
+function runRebalance() {
+  api(`/api/rebalance?method=${S.reb.method}`).then(d => {
+    S.reb.data = d;
+    renderRebalance();
+  }).catch(e => {
+    $('pf-reb-table').innerHTML = `<div class="empty">再平衡失败：${esc(e.message)}</div>`;
+    $('pf-reb-note').textContent = '';
+  });
+}
+
+function renderRebalance() {
+  const d = S.reb.data; if (!d) return;
+  $('pf-reb-note').textContent = d.note || '';
+  const rows = d.positions.map(p => `<tr>
+    <td class="name-cell">${esc(p.name || p.code)} <span style="color:var(--muted);font-size:11px">${p.code}</span></td>
+    <td>${p.current_weight}%</td>
+    <td style="color:${C().accent}"><b>${p.target_weight}%</b></td>
+    <td>${p.delta_pct}%</td>
+    <td style="color:${colorFor(p.delta_value)}">${p.delta_value >= 0 ? '+' : ''}¥${Math.abs(p.delta_value).toLocaleString()}</td>
+    <td>${p.action === '加仓' ? '<span class="badge up">加仓</span>' : p.action === '减仓' ? '<span class="badge down">减仓</span>' : '<span class="badge flat">持有</span>'}</td>
+    <td>${p.suggested_shares >= 0 ? '+' : ''}${(p.suggested_shares || 0).toLocaleString()} 份</td>
+  </tr>`).join('');
+  $('pf-reb-table').innerHTML = `<table class="grid"><thead><tr>
+    <th class="nosort">基金</th><th class="nosort">当前权重</th><th class="nosort">目标权重</th>
+    <th class="nosort">权重变动</th><th class="nosort">调仓金额</th><th class="nosort">动作</th><th class="nosort">建议份额</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="7" class="empty">暂无持仓，请先在上方添加持仓</td></tr>'}</tbody></table>`;
+
+  const cats = d.positions.map(p => (p.name && p.name.length > 8 ? p.name.slice(0, 8) + '…' : (p.name || p.code)));
+  chart('pf-reb-chart').setOption({
+    animation: false,
+    tooltip: { trigger: 'axis', valueFormatter: (v) => v + '%' },
+    legend: { top: 0, textStyle: { fontSize: 10, color: C().muted } },
+    grid: { left: 48, right: 16, top: 28, bottom: 20 },
+    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 10, color: C().text, interval: 0 }, axisLine: { lineStyle: { color: C().split } } },
+    yAxis: { type: 'value', axisLabel: { formatter: '{value}%', fontSize: 10, color: C().muted }, splitLine: { lineStyle: { color: C().split } } },
+    series: [
+      { name: '当前权重', type: 'bar', data: d.positions.map(p => p.current_weight), itemStyle: { color: C().muted } },
+      { name: '目标权重', type: 'bar', data: d.positions.map(p => p.target_weight), itemStyle: { color: C().accent } },
+    ],
+  }, true);
+}
+$('pf-reb-run').onclick = runRebalance;
+$('pf-reb-method').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.reb.method = b.dataset.m;
+  $$('#pf-reb-method button').forEach(x => x.classList.toggle('on', x === b));
+  runRebalance();
+});
 document.querySelector('#tab-backtest .toolbar').addEventListener('click', (e) => {
   const c = e.target.closest('.chip[data-preset]'); if (!c) return;
   const [s, l] = c.dataset.preset.split(',');
@@ -1318,8 +1438,8 @@ function setTab(name) {
   if (name === 'detail') loadDetail();
   if (name === 'compare') { syncFundSelectors(); if (!S.cmp.data) runCompare(); else renderCompare(); }
   if (name === 'news') { loadNews(); loadSources(); }
-  if (name === 'portfolio') loadPortfolio();
-  if (name === 'backtest') { if (!S.bt.data) runBacktest(); else renderBacktest(); }
+  if (name === 'portfolio') { loadPortfolio(); runRebalance(); }
+  if (name === 'backtest') { if (!S.bt.data) runBacktest(); else renderBacktest(); if (!S.dca.data) runDca(); else renderDca(); }
   if (name === 'overview') {
     if (!S.trend.loaded) loadTrend();
     else setTimeout(() => { const c = chart('ov-trend-chart'); if (c) c.resize(); }, 60);

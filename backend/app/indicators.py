@@ -118,11 +118,16 @@ def compute_all(values: List[float]) -> Dict[str, Any]:
     }
 
 
-def perf_stats(values: List[float], periods_per_year: int = 252) -> Dict[str, Any]:
-    """区间业绩统计：累计收益 / 年化 / 波动 / 最大回撤 / 夏普 / 胜率。"""
+def perf_stats(values: List[float], periods_per_year: int = 252, risk_free: float = 0.0) -> Dict[str, Any]:
+    """区间业绩统计：累计收益 / 年化 / 波动 / 最大回撤 / 夏普 / 索提诺 / 卡玛 / 胜率。
+    - 夏普 = (年化收益 - 无风险) / 年化波动
+    - 索提诺 = (年化收益 - 无风险) / 年化下行波动（仅惩罚下跌）
+    - 卡玛 = 年化收益 / 最大回撤
+    """
     if len(values) < 2:
         return {"total_return": 0, "annual_return": 0, "volatility": 0,
-                "max_drawdown": 0, "sharpe": 0, "win_rate": 0, "days": len(values)}
+                "max_drawdown": 0, "sharpe": 0, "sortino": 0, "calmar": 0,
+                "downside_dev": 0, "win_rate": 0, "days": len(values)}
     arr = np.array(values, dtype=float)
     rets = arr[1:] / arr[:-1] - 1
     total = arr[-1] / arr[0] - 1
@@ -132,7 +137,13 @@ def perf_stats(values: List[float], periods_per_year: int = 252) -> Dict[str, An
     peak = np.maximum.accumulate(arr)
     dd = (arr - peak) / peak
     mdd = float(dd.min())
-    sharpe = float(np.mean(rets) / np.std(rets) * np.sqrt(periods_per_year)) if np.std(rets) > 0 else 0.0
+    std_ret = float(np.std(rets))
+    sharpe = float((np.mean(rets) * periods_per_year - risk_free) / (std_ret * np.sqrt(periods_per_year))) if std_ret > 0 else 0.0
+    # 下行波动：仅低于 0 的收益
+    down = rets[rets < 0]
+    downside_dev = float(np.std(down)) * np.sqrt(periods_per_year) if down.size > 0 else 0.0
+    sortino = float((annual - risk_free) / downside_dev) if downside_dev > 0 else (0.0 if annual <= 0 else 9.99)
+    calmar = float(annual / abs(mdd)) if mdd < 0 else 0.0
     win = float((rets > 0).sum() / len(rets))
     return {
         "total_return": round(total * 100, 2),
@@ -140,6 +151,31 @@ def perf_stats(values: List[float], periods_per_year: int = 252) -> Dict[str, An
         "volatility": round(vol * 100, 2),
         "max_drawdown": round(mdd * 100, 2),
         "sharpe": round(sharpe, 2),
+        "sortino": round(sortino, 2),
+        "calmar": round(calmar, 2),
+        "downside_dev": round(downside_dev * 100, 2),
         "win_rate": round(win * 100, 1),
         "days": len(arr),
     }
+
+
+def valuation_temperature(values: List[float], ma_window: int = 60) -> Dict[str, Any]:
+    """净值估值温度（0-100，参考「市场温度」思路）：
+    以 NAV 相对其长期均线的偏离比例序列，当前偏离在历史分布中的百分位即为温度。
+    <30 低估(冷) / 30~70 适中(温) / >70 高估(热)。
+    注：基金无公开 PE，此处用「净值相对长期均线」的偏离度作为估值冷暖代理。
+    """
+    if len(values) < 30:
+        return {"temp": 50.0, "label": "适中", "nav_pct_rank": 50.0, "ma_ratio": None}
+    mw = min(ma_window, max(20, len(values) // 3))
+    mas = ma(values, mw)
+    ratio = [values[i] / mas[i] for i in range(len(values)) if mas[i]]
+    if len(ratio) < 5:
+        return {"temp": 50.0, "label": "适中", "nav_pct_rank": 50.0, "ma_ratio": None}
+    cur = ratio[-1]
+    below = sum(1 for r in ratio if r <= cur)
+    temp = round(below / len(ratio) * 100, 1)
+    label = "低估" if temp < 30 else ("高估" if temp > 70 else "适中")
+    nav_below = sum(1 for v in values if v <= values[-1])
+    nav_pct = round(nav_below / len(values) * 100, 1)
+    return {"temp": temp, "label": label, "nav_pct_rank": nav_pct, "ma_ratio": round(cur, 3)}

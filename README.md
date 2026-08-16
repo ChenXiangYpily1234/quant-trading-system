@@ -22,6 +22,10 @@ dashboard.
 | **Adjustment advice** | Clear buy / sell / add / reduce / hold suggestions plus position actions and a risk level. |
 | **Rich visualization** | ECharts charts for NAV, MA5/MA20, prediction interval (confidence band) and news digest. **Red = up, green = down** (A-share convention). |
 | **Historical NAV trends** | Overview trend panel with time-range / normalized-vs-raw toggles and zoomable time axis. |
+| **Enhanced risk metrics** | Per-fund `perf_stats`: total / annualized return, annualized volatility, **max drawdown, Sharpe, Sortino, Calmar, downside deviation, win-rate**. |
+| **Valuation temperature** | NAV-vs-long-MA percentile → a 0–100 "temperature" with a 低估 / 适中 / 高估 (under / fair / over-valued) label, shown as a badge on cards and in detail. |
+| **DCA backtest** | Regular (fixed-amount) and smart (value-averaging) dollar-cost-averaging backtest with cumulative principal, final value, total return and money-weighted annualized return (XIRR). |
+| **Portfolio rebalancing** | Suggest target weights via **equal-weight / risk-parity / signal-weighted** schemes and the trades needed to get there. |
 | **Resilience** | Graceful degradation when external services are unreachable (simulated NAV / built-in sample news / rule engine). System stays usable. |
 | **Performance** | Assembled fund state is cached and warmed on startup; an LLM circuit-breaker avoids repeated doomed network calls. Steady-state `/api/funds` is sub-10ms. |
 
@@ -98,8 +102,10 @@ quant-trading-system/
 │       ├── news.py             # news fetch (RSS/API) + built-in sample + scoring
 │       ├── predictor.py        # statistical prediction + news sentiment
 │       ├── llm.py              # LLM decision (OpenAI-compat) / rule-engine fallback
-│       ├── indicators.py       # MA / RSI / BOLL / MACD / volatility
+│       ├── indicators.py       # MA / RSI / BOLL / MACD / volatility + perf_stats + valuation_temperature
 │       ├── backtest.py         # ma_cross / momentum / buy_hold strategies
+│       ├── dca.py              # dollar-cost-averaging backtest (normal / value_avg)
+│       ├── rebalance.py        # equal / risk-parity / signal target weights
 │       ├── portfolio.py        # holdings + P&L computation
 │       ├── watchlist.py        # watched funds store
 │       ├── cache.py            # simple TTL in-memory cache
@@ -218,6 +224,8 @@ Base URL: `http://localhost:8000`
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/backtest/{code}?strategy=` | Backtest (`ma_cross` / `momentum` / `buy_hold`). |
+| GET | `/api/dca/{code}?strategy=&freq=&amount=&days=&fee_bps=` | Dollar-cost-averaging backtest (`normal` / `value_avg`, `monthly` / `weekly`). |
+| GET | `/api/rebalance?method=` | Rebalance suggestion (`equal` / `risk_parity` / `signal`) with target weights and suggested trades. |
 | GET | `/api/portfolio` | Portfolio holdings + P&L. |
 | POST | `/api/portfolio` | Upsert a holding (`{code, shares, cost_nav, name?}`). |
 | DELETE | `/api/portfolio/{code}` | Remove a holding. |

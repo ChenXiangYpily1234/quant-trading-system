@@ -271,6 +271,23 @@
           </div>
         </div>
       </div>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">组合再平衡建议<span class="sub">基于持仓市值、年化波动率与预测信号，给出目标权重与调仓方案</span></span>
+          <div class="spacer"></div>
+          <div class="seg" id="pf-reb-method">
+            <button data-m="equal">等权配置</button>
+            <button data-m="risk_parity" class="on">风险平价</button>
+            <button data-m="signal">信号加权</button>
+          </div>
+          <button class="btn sm primary" id="pf-reb-run">生成再平衡</button>
+        </div>
+        <div class="hint" id="pf-reb-note" style="margin-bottom:8px"></div>
+        <div class="cols-2">
+          <div class="table-wrap" id="pf-reb-table"></div>
+          <div id="pf-reb-chart" class="chart sm"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ TAB 6 策略回测 ============ -->
@@ -334,6 +351,52 @@
       <div class="panel">
         <div class="panel-title" style="margin-bottom:10px">交易明细</div>
         <div class="table-wrap" id="bt-trades"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">定投回测<span class="sub">普通定投 / 智能定投（价值平均），输出累计本金、期末市值、收益率、资金加权年化（XIRR）</span></span>
+          <div class="spacer"></div>
+          <span class="hint">对标市面「定投计算器 / 定投回测」</span>
+        </div>
+        <div class="form-row">
+          <div class="field" style="min-width:210px">
+            <label>基金</label>
+            <select class="sel" id="dca-code"></select>
+          </div>
+          <div class="field">
+            <label>方式</label>
+            <select class="sel" id="dca-strategy">
+              <option value="normal">普通定投（固定金额）</option>
+              <option value="value_avg">智能定投（价值平均）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>频率</label>
+            <select class="sel" id="dca-freq">
+              <option value="monthly">每月</option>
+              <option value="weekly">每周</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:120px">
+            <label>每期金额(元)</label>
+            <input class="inp" id="dca-amount" type="number" value="1000" min="10" step="100" />
+          </div>
+          <div class="field" style="min-width:96px">
+            <label>费率(bp)</label>
+            <input class="inp" id="dca-fee" type="number" value="15" min="0" max="200" />
+          </div>
+          <div class="field" style="min-width:110px">
+            <label>回测区间</label>
+            <select class="sel" id="dca-days">
+              <option value="120">120日</option>
+              <option value="250" selected>250日</option>
+              <option value="400">400日</option>
+            </select>
+          </div>
+          <button class="btn primary" id="dca-run">运行定投回测</button>
+        </div>
+        <div class="kpi-strip" id="dca-kpis" style="margin-top:12px"></div>
+        <div id="dca-chart" class="chart"></div>
       </div>
     </section>
 

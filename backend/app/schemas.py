@@ -28,6 +28,8 @@ class FundSummary(BaseModel):
     risk_level: Optional[str] = None           # 风险等级
     predicted_change_pct: Optional[float] = None
     return_20d: Optional[float] = None         # 近20日涨幅%
+    risk: Optional[Dict[str, Any]] = None      # 风险指标（年化/波动/回撤/夏普/索提诺/卡玛）
+    valuation: Optional[Dict[str, Any]] = None # 估值温度 {temp, label, nav_pct_rank, ma_ratio}
     sparkline: List[float] = []                # 迷你走势（近30点）
     data_source: str = "unknown"               # real / simulated
     held: bool = False                         # 是否已在持仓中
@@ -46,7 +48,8 @@ class FundDetail(BaseModel):
     ma5: List[Optional[float]]
     ma20: List[Optional[float]]
     indicators: Dict[str, Any] = {}   # ma10/ma60/boll/macd/kdj/rsi 序列
-    stats: Dict[str, Any] = {}        # 区间业绩统计
+    stats: Dict[str, Any] = {}        # 区间业绩统计（含风险指标）
+    valuation: Optional[Dict[str, Any]] = None  # 估值温度 {temp, label, nav_pct_rank, ma_ratio}
     prediction: Dict[str, Any]
     recommendation: Dict[str, Any]
     sentiment: Dict[str, Any]

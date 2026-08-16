@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
 from . import (config, fund_data, news as news_mod, predictor, llm,
-               indicators, backtest as bt, watchlist, portfolio, fund_universe)
+               indicators, backtest as bt, watchlist, portfolio, fund_universe, dca,
+               rebalance as rb)
 from .cache import cache
 from .schemas import (
     FundSummary, FundDetail, NewsList, AnalysisResult,
@@ -84,6 +85,15 @@ def build_state(code: str, meta: Dict[str, str], news_list: NewsList,
     return state
 
 
+def _valuation_of(code: str) -> Optional[Dict[str, Any]]:
+    """取较长窗口净值序列计算估值温度（带缓存）。"""
+    try:
+        entry = ensure_fund(code, max(config.HISTORY_DAYS, 250))
+        return indicators.valuation_temperature([p.nav for p in entry["points"]])
+    except Exception:
+        return None
+
+
 def _summary_of(f: Dict[str, Any], nl: NewsList, held_codes: set) -> FundSummary:
     st = build_state(f["code"], f, nl)
     lat = st["latest"]
@@ -91,6 +101,8 @@ def _summary_of(f: Dict[str, Any], nl: NewsList, held_codes: set) -> FundSummary
     navs = [p.nav for p in pts]
     ret20 = round((navs[-1] / navs[-21] - 1) * 100, 2) if len(navs) >= 21 else (
         round((navs[-1] / navs[0] - 1) * 100, 2) if navs else None)
+    risk = indicators.perf_stats(navs) if len(navs) >= 2 else None
+    valuation = _valuation_of(f["code"])
     return FundSummary(
         code=f["code"], name=f["name"], category=f.get("category", "其他"),
         note=f.get("note"), focus=f.get("focus", False),
@@ -103,6 +115,8 @@ def _summary_of(f: Dict[str, Any], nl: NewsList, held_codes: set) -> FundSummary
         risk_level=st["rec"].risk_level,
         predicted_change_pct=st["pred"]["predicted_change_pct"],
         return_20d=ret20,
+        risk=risk,
+        valuation=valuation,
         sparkline=[round(v, 4) for v in navs[-30:]],
         data_source=st["source"],
         held=f["code"] in held_codes,
@@ -207,6 +221,7 @@ def fund_detail(code: str, days: int = Query(60, ge=20, le=400)):
         ma5=ind_all["ma5"], ma20=ind_all["ma20"],
         indicators=ind_all,
         stats=indicators.perf_stats(navs),
+        valuation=_valuation_of(code),
         prediction=st["pred"],
         recommendation=st["rec"].dict(),
         sentiment=st["sentiment"],
@@ -360,7 +375,78 @@ def run_backtest(code: str,
     return result
 
 
-# ---------------- 持仓 ----------------
+# ---------------- 定投回测 ----------------
+@app.get("/api/dca/{code}")
+def run_dca(code: str,
+            strategy: str = Query("normal", pattern="^(normal|value_avg)$"),
+            freq: str = Query("monthly", pattern="^(monthly|weekly)$"),
+            amount: float = Query(1000.0, ge=10, le=100000),
+            days: int = Query(250, ge=40, le=400),
+            fee_bps: float = Query(15.0, ge=0, le=200)):
+    """定投回测：普通定投 / 智能定投（价值平均），输出累计本金、期末市值、收益率、XIRR。"""
+    meta = watchlist.get(code) or fund_universe.get_info(code)
+    if not meta:
+        raise HTTPException(status_code=404, detail="基金代码未找到")
+    entry = ensure_fund(code, days)
+    pts = _slice(entry, days)
+    if len(pts) < 10:
+        raise HTTPException(status_code=400,
+                            detail="历史数据不足，无法定投回测")
+    result = dca.run(pts, amount=amount, freq=freq, strategy=strategy, fee_bps=fee_bps)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    result.update({"code": code, "name": meta.get("name", code),
+                   "data_source": entry["source"]})
+    return result
+
+
+# ---------------- 组合再平衡 ----------------
+@app.get("/api/rebalance")
+def rebalance(method: str = Query("risk_parity",
+                                   pattern="^(equal|risk_parity|signal)$")):
+    """组合再平衡建议：equal（等权）/ risk_parity（风险平价）/ signal（信号加权）。
+    基于当前持仓市值、各基金年化波动率与预测信号，给出目标权重与建议调仓。"""
+    holdings = portfolio.list_all()
+    if not holdings:
+        raise HTTPException(status_code=400,
+                            detail="请先添加持仓（POST /api/portfolio）后再做再平衡")
+    nl = _fetch_news_cached()
+    navs: Dict[str, float] = {}
+    vols: Dict[str, float] = {}
+    prices: Dict[str, float] = {}
+    signals: Dict[str, Dict[str, Any]] = {}
+    for h in holdings:
+        code = h["code"]
+        info = fund_universe.get_info(code) or {"name": h.get("name", code)}
+        entry = ensure_fund(code, max(config.HISTORY_DAYS, 250))
+        pts = entry["points"]
+        navv = [p.nav for p in pts]
+        meta = {"code": code, "name": info.get("name", code),
+                "category": info.get("type", ""), "note": "", "focus": False}
+        st = build_state(code, meta, nl)
+        cur = st["latest"]
+        price = cur.nav if cur else (navv[-1] if navv else 0.0)
+        shares = float(h["shares"])
+        value = shares * price if price else 0.0
+        navs[code] = value
+        prices[code] = price
+        vols[code] = (indicators.perf_stats(navv).get("volatility") or 0.0) / 100.0
+        signals[code] = {"direction": st["pred"]["direction"],
+                         "confidence": st["pred"]["confidence"] or 0.0}
+    if not any(navs.values()):
+        raise HTTPException(status_code=400, detail="持仓暂无净值数据，无法再平衡")
+
+    def _resolve_name(h):
+        nm = h.get("name")
+        if nm:
+            return nm
+        info = fund_universe.get_info(h["code"]) or {}
+        if isinstance(info, dict):
+            return info.get("name", h["code"])
+        return str(info) if info else h["code"]
+
+    names = {h["code"]: _resolve_name(h) for h in holdings}
+    return rb.suggest(method, navs, vols, signals, prices, names)
 def _nav_map() -> Dict[str, Dict[str, Any]]:
     nl = _fetch_news_cached()
     out: Dict[str, Dict[str, Any]] = {}
