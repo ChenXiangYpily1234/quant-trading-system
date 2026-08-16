@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Syntax check (Python)
+        working-directory: backend
+        run: |
+          python -m compileall -q app && echo "py compile OK"
+          python -m py_compile app/main.py app/llm.py app/config.py
+
+      - name: Syntax check (Frontend JS)
+        run: |
+          for f in frontend/js/*.js; do
+            node --check "$f" && echo "OK: $f" || exit 1
+          done
+        shell: bash
+
+      - name: Boot server
+        working-directory: backend
+        run: |
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --log-level warning &
+          echo $! > /tmp/uvicorn.pid
+          # wait for the server to accept connections (max ~30s)
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://127.0.0.1:8000/api/health; then
+              echo "server up after ${i}s"; break
+            fi
+            sleep 1
+          done
+
+      - name: Smoke test endpoints
+        run: |
+          set -e
+          curl -fsS http://127.0.0.1:8000/api/health | tee /tmp/health.json
+          echo
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/funds)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/history?codes=005844,006265\&days=120)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/news)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/search?q=AI)" = "200"
+          echo "all smoke tests passed"
+
+      - name: Shutdown server
+        if: always()
+        run: |
+          if [ -f /tmp/uvicorn.pid ]; then kill "$(cat /tmp/uvicorn.pid)" || true; fi

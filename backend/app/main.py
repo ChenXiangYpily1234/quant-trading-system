@@ -4,7 +4,7 @@ import io
 import csv
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
@@ -26,6 +26,8 @@ app = FastAPI(title="量化交易系统 · CPO/科技基金监控", version="2.0
 
 # 基金净值缓存：code -> {points, source, updated, days}
 _fund_cache: Dict[str, Dict[str, Any]] = {}
+# 组装状态缓存：(code, days) -> {state, updated}；避免每个请求都重跑预测+LLM 研判
+_state_cache: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
 
 # ---------------- 数据装配 ----------------
@@ -59,6 +61,12 @@ def _slice(entry: Dict[str, Any], days: int):
 
 def build_state(code: str, meta: Dict[str, str], news_list: NewsList,
                 days: int = config.HISTORY_DAYS):
+    # 命中状态缓存直接返回，避免每个请求重跑预测与 LLM 研判（性能关键路径）
+    key = (code, days)
+    now = time.time()
+    cached = _state_cache.get(key)
+    if cached and (now - cached["updated"]) < config.CACHE_TTL_SECONDS:
+        return cached["state"]
     entry = ensure_fund(code, days)
     points = _slice(entry, days)
     source = entry["source"]
@@ -67,11 +75,13 @@ def build_state(code: str, meta: Dict[str, str], news_list: NewsList,
     rec = llm.analyze(code, meta["name"], pred, news_list.items)
     est, est_chg = fund_data.intraday_estimate(code, pred["indicators"]["latest_nav"], source)
     latest = points[-1] if points else None
-    return {
+    state = {
         "points": points, "source": source, "sentiment": sentiment,
         "pred": pred, "rec": rec, "estimate": est, "estimate_change": est_chg,
         "latest": latest,
     }
+    _state_cache[key] = {"state": state, "updated": now}
+    return state
 
 
 def _summary_of(f: Dict[str, Any], nl: NewsList, held_codes: set) -> FundSummary:
@@ -140,6 +150,8 @@ def delete_fund(code: str):
     if not watchlist.remove(code):
         raise HTTPException(status_code=404, detail="该基金不在自选列表中")
     _fund_cache.pop(code, None)
+    for k in [k for k in _state_cache if k[0] == code]:
+        _state_cache.pop(k, None)
     return {"status": "removed", "code": code}
 
 
@@ -155,6 +167,7 @@ def toggle_focus(code: str):
 def reset_watchlist():
     data = watchlist.reset()
     _fund_cache.clear()
+    _state_cache.clear()
     return {"status": "reset", "count": len(data)}
 
 
@@ -440,6 +453,7 @@ def delete_news_source(url: str):
 @app.post("/api/refresh")
 def refresh():
     _fund_cache.clear()
+    _state_cache.clear()
     cache.set("news", None, ttl=0)
     nl = news_mod.get_news(limit=40)
     cache.set("news", nl, ttl=300)
@@ -449,11 +463,34 @@ def refresh():
             "news": nl.total, "time": time.strftime("%H:%M:%S")}
 
 
+def _warm_all():
+    """预热净值与组装状态缓存，使首屏请求即时返回（后台执行，失败不阻塞）。"""
+    try:
+        nl = _fetch_news_cached()
+        for f in watchlist.list_all():
+            try:
+                ensure_fund(f["code"])
+            except Exception:
+                pass
+        for f in watchlist.list_all():
+            try:
+                build_state(f["code"], f, nl)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 async def _background_refresh():
     while True:
         try:
+            nl = _fetch_news_cached()
             for f in watchlist.list_all():
                 ensure_fund(f["code"])
+                try:
+                    build_state(f["code"], f, nl)
+                except Exception:
+                    pass
         except Exception:
             pass
         await asyncio.sleep(config.REFRESH_INTERVAL_SECONDS)
@@ -462,6 +499,7 @@ async def _background_refresh():
 @app.on_event("startup")
 async def _startup():
     fund_universe.load_universe()   # 预热基金全库（本地缓存）
+    _warm_all()                       # 同步预热，保证首个请求即时返回
     asyncio.create_task(_background_refresh())
 
 

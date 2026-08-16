@@ -13,6 +13,10 @@ from typing import List, Dict, Any, Optional
 from . import config
 from .schemas import AnalysisResult, NavPoint, NewsItem
 
+# 熔断：当 LLM 接口不可达时，在冷却窗口内直接走规则引擎，避免每个基金都发起一次
+# 注定失败的网络请求（约 0.6s/次 × N 基金 → 整页卡顿）。命中冷却窗口后 _call_llm 立即返回 None。
+_LLM_DISABLED_UNTIL = 0.0
+
 
 def _build_prompt(name: str, code: str, prediction: Dict[str, Any], news: List[NewsItem]) -> str:
     ind = prediction.get("indicators", {})
@@ -30,8 +34,12 @@ def _build_prompt(name: str, code: str, prediction: Dict[str, Any], news: List[N
 
 
 def _call_llm(name: str, code: str, prediction: Dict[str, Any], news: List[NewsItem]) -> Optional[Dict[str, Any]]:
+    global _LLM_DISABLED_UNTIL
     cfg = config.LLM_CONFIG
     if not cfg.get("enabled") or not cfg.get("api_key"):
+        return None
+    # 熔断：冷却窗口内不再发起网络请求，直接回退规则引擎
+    if time.time() < _LLM_DISABLED_UNTIL:
         return None
     try:
         payload = {
@@ -42,7 +50,10 @@ def _call_llm(name: str, code: str, prediction: Dict[str, Any], news: List[NewsI
             ],
             "temperature": cfg["temperature"],
         }
-        with httpx.Client(timeout=cfg["timeout"], headers={
+        # 拆分连接/读取超时：连接失败应快速失败，避免拖慢整页
+        timeout = httpx.Timeout(connect=4.0, read=cfg.get("timeout", 12),
+                                write=10.0, pool=4.0)
+        with httpx.Client(timeout=timeout, headers={
             "Authorization": f"Bearer {cfg['api_key']}",
             "Content-Type": "application/json",
         }) as c:
@@ -55,6 +66,8 @@ def _call_llm(name: str, code: str, prediction: Dict[str, Any], news: List[NewsI
             return None
         return json.loads(m.group(0))
     except Exception:
+        # 接口不可达/超时：熔断一段时间，期间直接走规则引擎，避免重复踩雷
+        _LLM_DISABLED_UNTIL = time.time() + config.LLM_COOLDOWN_SECONDS
         return None
 
 

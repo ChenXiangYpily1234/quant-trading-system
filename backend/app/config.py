@@ -60,8 +60,9 @@ REFRESH_INTERVAL_SECONDS = int(os.getenv("REFRESH_INTERVAL", "15"))  # 后台自
 REQUEST_TIMEOUT = 10           # 单次抓取超时（秒）
 HISTORY_DAYS = 60              # 默认历史净值天数（约3页，足以计算MA20）
 PREDICT_DAYS = 5               # 预测未来天数
-CACHE_TTL_SECONDS = 60         # 净值缓存有效期
-FUND_CACHE_TTL = 600            # 历史净值缓存时长（分钟级刷新即可，日内实时感由模拟估值提供）
+CACHE_TTL_SECONDS = 60         # 净值/状态缓存有效期（秒）
+FUND_CACHE_TTL = 600            # 历史净值缓存时长（秒，分钟级刷新即可，日内实时感由模拟估值提供）
+LLM_COOLDOWN_SECONDS = int(os.getenv("LLM_COOLDOWN", "300"))  # LLM 接口不可达后的熔断冷却时长（秒）
 
 # 是否允许在无法获取真实数据时生成模拟数据
 ALLOW_SIMULATED_DATA = os.getenv("ALLOW_SIM", "true").lower() == "true"

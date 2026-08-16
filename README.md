@@ -1,113 +1,271 @@
-# 量化交易系统 · CPO / 科技基金监控
+# Quant Trading System — CPO / Tech-Fund Monitoring & Decision Workbench
 
-一个面向 **CPO（光模块）、半导体、AI、5G 通信** 等科技主题基金的量化监控与辅助决策系统。
-实时追踪基金净值走势、自动抓取财经新闻、结合大模型（或规则引擎）给出走势预测与持仓调整建议，并以图表直观呈现。
+A self-contained quantitative monitoring and auxiliary-decision system for
+**tech-themed funds** (CPO / optical modules, semiconductors, AI, 5G
+communications). It continuously tracks NAV trends, scrapes financial news,
+produces short-term directional predictions, and (optionally) uses an LLM to
+generate actionable adjustment advice — all rendered in an interactive
+dashboard.
 
----
-
-## ✨ 核心功能
-
-| 功能 | 说明 |
-|------|------|
-| **基金监控与预测** | 多基金同时监控，实时追踪净值趋势；基于动量与均线合成短期走势预测 |
-| **新闻抓取** | 自动抓取财经/CPO/科技资讯，按相关度与正负面情绪打分排序 |
-| **大模型辅助决策** | 集成 OpenAI 兼容大模型，结合新闻与历史净值给出研判；未配置 Key 时自动降级为内置「规则引擎分析师」 |
-| **基金调整建议** | 输出买入/卖出/加仓/减仓/持有等明确操作建议与仓位动作、风险等级 |
-| **数据可视化** | ECharts 图表展示净值、MA5/MA20、预测区间（置信带）与新闻摘要；红涨绿跌（A股惯例） |
-
-- **实时性**：后台定时刷新真实净值；日内「盘中模拟估值」随时间平滑波动，呈现实时观感。
-- **健壮性**：外部接口不可达时自动降级（模拟净值 / 内置示例资讯 / 规则引擎），系统始终可用。
-- **多基金**：默认监控 6 只科技主题基金，可在 `backend/app/config.py` 自由增删。
+> ⚠️ **Not investment advice.** Predictions and recommendations are derived from
+> historical statistics and news sentiment. Use at your own risk.
 
 ---
 
-## 🏗️ 架构
+## ✨ Features
+
+| Capability | Description |
+|------------|-------------|
+| **Multi-fund monitoring** | Watch several funds at once; track NAV trajectory and short-term direction from momentum + moving-average signals. |
+| **News aggregation & sentiment** | Scrape financial / CPO / tech news, score by relevance and positive/negative sentiment, sort and filter. |
+| **LLM-assisted decisions** | Optional OpenAI-compatible model. Without an API key it transparently falls back to a built-in **rule-engine analyst**. |
+| **Adjustment advice** | Clear buy / sell / add / reduce / hold suggestions plus position actions and a risk level. |
+| **Rich visualization** | ECharts charts for NAV, MA5/MA20, prediction interval (confidence band) and news digest. **Red = up, green = down** (A-share convention). |
+| **Historical NAV trends** | Overview trend panel with time-range / normalized-vs-raw toggles and zoomable time axis. |
+| **Resilience** | Graceful degradation when external services are unreachable (simulated NAV / built-in sample news / rule engine). System stays usable. |
+| **Performance** | Assembled fund state is cached and warmed on startup; an LLM circuit-breaker avoids repeated doomed network calls. Steady-state `/api/funds` is sub-10ms. |
+
+---
+
+## 🏗️ Architecture
+
+```
+                         ┌─────────────────────────────┐
+   Browser (dashboard)   │          FastAPI            │
+        │                │  ┌───────────────────────┐  │
+        │  REST /api/*   │  │  main.py (routes)     │  │
+        ├───────────────►│  │  build_state()        │  │
+        │                │  │   ├─ ensure_fund()    │  │
+        │◄───────────────│  │   ├─ predictor        │  │
+        │   JSON + HTML  │  │   ├─ llm (or rule)    │  │
+        └───────────────►│  │   └─ intraday_estimate│  │
+                         │  └───────────────────────┘  │
+                         │  caches: _fund_cache         │
+                         │          _state_cache        │
+                         │  background refresh loop     │
+                         └───────┬───────────┬──────────┘
+                                 │           │
+                  ┌──────────────┴──┐   ┌─────┴──────────────┐
+                  │ East Money NAV │   │ News sources (RSS/  │
+                  │  (real, w/     │   │  API) + built-in    │
+                  │   simulated    │   │  sample fallback)   │
+                  │   fallback)    │   └──────────────────────┘
+                  └───────────────┘
+                                 │ (optional)
+                          ┌──────┴─────────┐
+                          │ OpenAI-compat. │
+                          │ LLM endpoint   │
+                          └────────────────┘
+
+   Frontend: index.html + css/styles.css + js/app.js + lib/echarts.min.js
+   (served as static files from /static; no build step required)
+```
+
+### Request flow (hot path)
+
+1. Browser loads `/` → `index.html` (static).
+2. `js/app.js` calls `/api/funds` (and other endpoints) on load and on a timer.
+3. `list_funds()` → for each watched fund → `build_state()`.
+4. `build_state()` returns the **cached** assembled state if fresh
+   (`_state_cache`, TTL 60s); otherwise it computes:
+   - `ensure_fund()` → NAV series from `_fund_cache` (East Money real data,
+     simulated fallback), TTL 600s.
+   - `predictor.predict()` → momentum / MA / RSI / volatility signals.
+   - `llm.analyze()` → LLM if configured & reachable, else rule engine.
+   - `intraday_estimate()` → simulated intraday valuation.
+5. A background task keeps `_fund_cache` and `_state_cache` warm every
+   `REFRESH_INTERVAL_SECONDS` (default 15s), so the first user request after
+   startup is instant.
+
+---
+
+## 📁 Project structure
 
 ```
 quant-trading-system/
+├── LICENSE
+├── README.md
+├── .github/
+│   └── workflows/ci.yml        # CI: syntax check + boot + /api/health smoke test
 ├── backend/
-│   ├── app/
-│   │   ├── config.py       # 基金列表 / 新闻源 / 大模型 / 刷新策略（均支持环境变量覆盖）
-│   │   ├── fund_data.py    # 净值抓取（东方财富，多页）+ 模拟降级 + 盘中估值
-│   │   ├── news.py         # 新闻抓取（RSS/API）+ 内置示例 + 情感/相关度打分
-│   │   ├── predictor.py    # 统计预测（动量/MA/RSI/波动率）+ 新闻情感聚合
-│   │   ├── llm.py          # 大模型决策（OpenAI 兼容） / 规则引擎兜底
-│   │   ├── schemas.py      # 响应模型
-│   │   ├── cache.py        # TTL 内存缓存
-│   │   └── main.py         # FastAPI 路由 + 后台自动刷新
-│   ├── requirements.txt
-│   └── run.py
+│   ├── requirements.txt        # fastapi, uvicorn, httpx, numpy
+│   ├── run.py                  # convenience launcher
+│   └── app/
+│       ├── config.py           # funds / news / LLM / refresh (env-overridable)
+│       ├── main.py             # FastAPI routes + caches + background refresh
+│       ├── fund_data.py        # NAV fetch (East Money) + simulate + intraday est.
+│       ├── fund_universe.py    # local fund-code universe for search
+│       ├── news.py             # news fetch (RSS/API) + built-in sample + scoring
+│       ├── predictor.py        # statistical prediction + news sentiment
+│       ├── llm.py              # LLM decision (OpenAI-compat) / rule-engine fallback
+│       ├── indicators.py       # MA / RSI / BOLL / MACD / volatility
+│       ├── backtest.py         # ma_cross / momentum / buy_hold strategies
+│       ├── portfolio.py        # holdings + P&L computation
+│       ├── watchlist.py        # watched funds store
+│       ├── cache.py            # simple TTL in-memory cache
+│       └── schemas.py          # response models
 └── frontend/
-    ├── index.html          # 仪表盘页面
+    ├── index.html              # dashboard shell (6 tabs)
     ├── css/styles.css
-    ├── js/app.js           # 数据拉取 / 渲染 / 自动刷新
-    └── lib/echarts.min.js  # 本地化图表库（离线可用）
+    ├── js/app.js               # data fetch / render / auto-refresh
+    └── lib/echarts.min.js      # bundled chart library (offline-capable)
 ```
+
+> `backend/data/` (cached universe) and `__pycache__/` are git-ignored.
 
 ---
 
-## 🚀 运行
+## 🚀 Local run
 
 ```bash
+# 1. Backend
 cd backend
-# 使用项目虚拟环境（推荐）
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# 启动（默认 0.0.0.0:8000）
+# 2. Start (default 127.0.0.1:8000)
 python run.py
+#    or, explicitly:
+#    python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 3. Open the dashboard
+open http://localhost:8000
 ```
 
-浏览器打开 **http://localhost:8000** 即可。默认每 15 秒自动刷新；也可点击「立即刷新」。
+The dashboard auto-refreshes every 15s (configurable) and also offers a
+**manual refresh** button.
 
 ---
 
-## ⚙️ 配置
+## ⚙️ Configuration
 
-所有配置集中在 `backend/app/config.py`，并支持环境变量覆盖：
+All tunables live in `backend/app/config.py` and can be overridden by
+environment variables.
 
-### 1. 监控基金（`DEFAULT_FUNDS`）
+### Watched funds — `DEFAULT_FUNDS`
 ```python
-{"code": "008086", "name": "华夏中证5G通信主题ETF联接A", "category": "CPO/通信", "note": "..."}
+{"code": "008086", "name": "华夏中证5G通信主题ETF联接A",
+ "category": "CPO/通信", "note": "...", "focus": True}
 ```
-`code` 为天天基金/东方财富基金代码，系统会自动尝试抓取其真实净值。
+`code` is the East Money / Tian Tian fund code; the system tries to fetch its
+real NAV automatically.
 
-### 2. 新闻源（`NEWS_SOURCES`）
-支持 `rss` 与 `api` 两种类型，可自由追加你自己的财经 RSS / 接口：
+### News sources — `NEWS_SOURCES`
+Supports `rss` and `api` types. Append your own financial feeds:
 ```python
-{"type": "rss", "name": "我的RSS", "url": "https://example.com/feed.xml", "keywords": ["CPO","光模块"]}
+{"type": "rss", "name": "My RSS", "url": "https://example.com/feed.xml",
+ "keywords": ["CPO", "光模块"]}
 ```
-未配置或外部不可达时，自动回退到内置「示例资讯库」。
+If none are configured or unreachable, the system falls back to a built-in
+sample news library.
 
-### 3. 大模型（`LLM_CONFIG` / 环境变量）
+### LLM — `LLM_CONFIG` (env vars)
 ```bash
-export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="https://api.openai.com/v1"   # 任意 OpenAI 兼容端点
+export OPENAI_API_KEY="sk-..."                       # enables real LLM
+export OPENAI_BASE_URL="https://api.openai.com/v1"  # any OpenAI-compatible endpoint
 export OPENAI_MODEL="gpt-4o-mini"
 ```
-配置后「研判引擎」切换为真实大模型；未配置则使用内置规则引擎（基于指标+新闻情感的确定性决策）。
+With a key set, the analysis engine switches to the real model. Without it, the
+built-in **rule-engine analyst** (deterministic, indicator + sentiment based) is
+used. If a configured endpoint is unreachable, a **circuit breaker** disables
+the LLM for `LLM_COOLDOWN_SECONDS` (default 300s) and falls back to the rule
+engine automatically — so the page never hangs on a dead LLM.
 
-### 4. 刷新与缓存
-`REFRESH_INTERVAL`（默认 15s）、`HISTORY_DAYS`（默认 60）、`PREDICT_DAYS`（默认 5）等均可调整。
+### Refresh / cache
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `REFRESH_INTERVAL` | `15` | background refresh interval (seconds) |
+| `HISTORY_DAYS` | `60` | default NAV history window |
+| `PREDICT_DAYS` | `5` | forecast horizon (days) |
+| `CACHE_TTL_SECONDS` | `60` | assembled state cache TTL |
+| `FUND_CACHE_TTL` | `600` | raw NAV cache TTL (seconds) |
+| `LLM_COOLDOWN` | `300` | LLM circuit-breaker cooldown (seconds) |
+| `ALLOW_SIM` | `true` | allow simulated NAV when real fetch fails |
+| `REQUEST_TIMEOUT` | `10` | per-request HTTP timeout (seconds) |
 
 ---
 
-## 📡 API 一览
+## 📡 API reference
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 服务状态、大模型开关、监控基金数 |
-| GET | `/api/funds` | 多基金监控摘要（净值/估值/方向/置信/建议） |
-| GET | `/api/funds/{code}` | 单基金详情（历史、MA、预测、推荐、情感） |
-| GET | `/api/news` | 财经新闻列表（相关度+情感排序） |
-| GET | `/api/analysis/{code}` | 大模型/规则引擎研判结果 |
-| POST | `/api/refresh` | 强制刷新全部数据 |
+Base URL: `http://localhost:8000`
+
+### System
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Service status, LLM switch, counts. |
+| POST | `/api/refresh` | Force-refresh all data (clears caches). |
+
+### Funds
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/funds` | Multi-fund monitoring summaries (NAV / estimate / direction / confidence / advice). |
+| POST | `/api/funds` | Add a fund (`{code, category?, note?, focus?}`). |
+| DELETE | `/api/funds/{code}` | Remove a fund. |
+| POST | `/api/funds/{code}/focus` | Toggle focus (star) flag. |
+| GET | `/api/funds/{code}` | Single-fund detail (history, MA, prediction, recommendation, sentiment). |
+| GET | `/api/analysis/{code}` | LLM / rule-engine analysis result. |
+| GET | `/api/export/{code}.csv` | Export NAV + indicators as CSV. |
+| POST | `/api/watchlist/reset` | Reset watchlist to defaults. |
+
+### Discovery & comparison
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/search?q=` | Search the fund universe by code / name / pinyin. |
+| GET | `/api/compare?codes=a,b&days=` | Compare multiple funds (normalized return, correlation matrix). |
+| GET | `/api/history?codes=a,b&days=` | Raw historical NAV series for the trend chart. |
+
+### Strategy & portfolio
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/backtest/{code}?strategy=` | Backtest (`ma_cross` / `momentum` / `buy_hold`). |
+| GET | `/api/portfolio` | Portfolio holdings + P&L. |
+| POST | `/api/portfolio` | Upsert a holding (`{code, shares, cost_nav, name?}`). |
+| DELETE | `/api/portfolio/{code}` | Remove a holding. |
+
+### News
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/news` | News list (relevance + sentiment sort, filterable). |
+| GET | `/api/news/sources` | List configured news sources. |
+| POST | `/api/news/sources` | Add a news source. |
+| DELETE | `/api/news/sources?url=` | Remove a news source. |
 
 ---
 
-## ⚠️ 说明与边界
+## 🔧 CI / CD
 
-- **真实数据**：基金净值来自东方财富公开接口（日频，收盘后更新）。
-- **盘中估值**：真实盘中报价接口未开放，系统以「时间驱动的模拟估值」呈现实时变化，前端已明确标注为「模拟估值」，仅供演示。
-- **预测性质**：统计预测与建议基于历史规律与新闻情感，**不构成投资建议**，实盘请结合自身风险偏好。
-- **新闻源**：直连财经新闻接口常受反爬限制，默认回退到内置示例；建议在 `NEWS_SOURCES` 接入你有权限的源。
+`.github/workflows/ci.yml` runs on every push/PR to `main`:
+
+1. Checkout & set up Python 3.13.
+2. Install `backend/requirements.txt`.
+3. **Syntax checks**: `python -m compileall app` and `node --check` on every
+   frontend JS file.
+4. Boot the uvicorn server in the background.
+5. **Smoke test**: `curl /api/health` and assert `200` on
+   `/api/funds`, `/api/history`, `/api/news`, `/api/search`.
+6. Shut the server down.
+
+This gives a push-to-`main` gate that the service boots and its core endpoints
+respond before the change is considered healthy.
+
+---
+
+## ⚠️ Notes & boundaries
+
+- **Real data**: NAV comes from East Money's public interface (daily frequency,
+  updated after market close). When unreachable, the system falls back to
+  deterministic simulated data and labels it accordingly.
+- **Intraday estimate**: Real intraday quote APIs are not openly available, so
+  the dashboard shows a **time-driven simulated valuation** clearly marked as
+  "模拟估值 / simulated" — for demonstration only.
+- **Predictions**: Statistical forecasts and advice are based on historical
+  patterns and news sentiment and **do not constitute investment advice**.
+- **News sources**: Direct financial-news endpoints are often anti-scraped
+  protected; the default falls back to the built-in sample library. Wire your
+  own permitted sources via `NEWS_SOURCES`.
+
+---
+
+## 📄 License
+
+Released under the [MIT License](./LICENSE).
