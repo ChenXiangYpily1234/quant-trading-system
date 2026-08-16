@@ -157,13 +157,33 @@ environment variables.
 real NAV automatically.
 
 ### News sources — `NEWS_SOURCES`
-Supports `rss` and `api` types. Append your own financial feeds:
+
+Five built-in RSS feeds are enabled by default, each with its own **rule
+keywords** (`keywords`). Every fetched item is scored/tagged by matching against
+that source's keyword list (rule hit), so the headline, relevance score, and
+`#tag` chips you see in the UI are driven by which rules matched:
+
+| Source | Theme | Rule keywords |
+|--------|-------|---------------|
+| 量子位(AI) | AI / 大模型 / 机器人 | 人工智能, AI, 大模型, 算力, 芯片, 机器人, 半导体, 自动驾驶 |
+| 钛媒体 | 科技 / 财经 | 科技, AI, 半导体, 新能源, 数字经济, 算力, 互联网 |
+| 少数派 | 数码 / 效率 / AI | 科技, 数码, AI, 软件, 效率, 智能 |
+| 英为财情(市场) | 全球市场 | 股市, 基金, A股, 港股, 美股, 美联储, 黄金, 汇率, 央行, 通胀 |
+| 雷锋网 | 硬科技 / 机器人 / 芯片 | 人工智能, AI, 机器人, 芯片, 半导体, 自动驾驶, 智能硬件, 算力, 新能源 |
+
+A global keyword list `NEWS_KEYWORDS` (CPO, 光模块, 算力, 半导体, 英伟达…) is
+used for the built-in sample library and as the default when a source omits
+`keywords`. Append your own financial feeds — both `rss` and `api` are supported:
+
 ```python
 {"type": "rss", "name": "My RSS", "url": "https://example.com/feed.xml",
  "keywords": ["CPO", "光模块"]}
 ```
-If none are configured or unreachable, the system falls back to a built-in
-sample news library.
+
+If a feed is unreachable or returns malformed XML, the parser falls back to a
+tolerant regex extractor; if **no** source returns items, the system falls back
+to the built-in sample news library (clearly labeled) so the page is never
+empty.
 
 ### LLM — `LLM_CONFIG` (env vars)
 ```bash

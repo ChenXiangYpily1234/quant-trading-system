@@ -33,7 +33,19 @@ DEFAULT_FUNDS: List[Dict] = [
 # 直连财经新闻接口常被反爬拦截，故默认源可能失败；
 # 失败时系统回退到内置的「示例资讯库」（已按 CPO/科技主题整理）。
 NEWS_SOURCES: List[Dict] = [
-    # 用户可在此追加自己的新闻源，例如：
+    # 内置新闻源（默认开启，覆盖 AI / 科技 / 市场）。每条带 keywords = 该源命中规则，
+    # 抓到的资讯会按这些关键词做相关度打分与主题标签（规则命中）。
+    {"type": "rss", "name": "量子位(AI)", "url": "https://www.qbitai.com/feed",
+     "keywords": ["人工智能", "AI", "大模型", "算力", "芯片", "机器人", "半导体", "自动驾驶"]},
+    {"type": "rss", "name": "钛媒体", "url": "https://www.tmtpost.com/rss.xml",
+     "keywords": ["科技", "AI", "半导体", "新能源", "数字经济", "算力", "互联网"]},
+    {"type": "rss", "name": "少数派", "url": "https://sspai.com/feed",
+     "keywords": ["科技", "数码", "AI", "软件", "效率", "智能"]},
+    {"type": "rss", "name": "英为财情(市场)", "url": "https://cn.investing.com/rss/news.rss",
+     "keywords": ["股市", "基金", "A股", "港股", "美股", "美联储", "黄金", "汇率", "央行", "通胀"]},
+    {"type": "rss", "name": "雷锋网", "url": "https://www.leiphone.com/feed",
+     "keywords": ["人工智能", "AI", "机器人", "芯片", "半导体", "自动驾驶", "智能硬件", "算力", "新能源"]},
+    # 用户可在此或界面上追加自己的新闻源，例如：
     # {"type": "rss", "name": "我的RSS", "url": "https://example.com/feed.xml", "keywords": ["CPO", "光模块", "算力"]},
 ]
 

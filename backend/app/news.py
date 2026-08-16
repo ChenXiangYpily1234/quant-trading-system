@@ -6,6 +6,7 @@
 - 支持按关键词 / 情感 / 标签过滤
 """
 import time
+import re
 import html
 import urllib.parse
 import httpx
@@ -56,10 +57,11 @@ def _all_sources() -> List[Dict]:
 
 
 # ---------------- 打分与标签 ----------------
-def _relevance(text: str) -> float:
+def _relevance(text: str, keywords: List[str] = None) -> float:
+    kws = keywords or config.NEWS_KEYWORDS
     t = text.lower()
     score = 0.0
-    for kw in config.NEWS_KEYWORDS:
+    for kw in kws:
         if kw.lower() in t:
             weight = 2.0 if kw.lower() in ("cpo", "光模块", "算力") else 1.0
             score += weight
@@ -75,10 +77,12 @@ def _sentiment(text: str) -> float:
     return round((pos - neg) / total, 2)
 
 
-def _tags(text: str) -> List[str]:
+def _tags(text: str, keywords: List[str] = None) -> List[str]:
+    """按 keywords 命中提取主题标签（保留原始大小写用于展示，匹配时忽略大小写）。"""
+    kws = keywords or config.NEWS_KEYWORDS
     t = text.lower()
     out = []
-    for kw in config.NEWS_KEYWORDS:
+    for kw in kws:
         if kw.lower() in t:
             out.append(kw)
     return out[:5]
@@ -126,7 +130,7 @@ def _sample_news() -> List[NewsItem]:
 
 
 # ---------------- 真实源抓取 ----------------
-def _mk(title, link, source, published, summary) -> NewsItem:
+def _mk(title, link, source, published, summary, keywords: List[str] = None) -> NewsItem:
     txt = title + " " + (summary or "")
     return NewsItem(
         title=html.unescape(title),
@@ -134,41 +138,71 @@ def _mk(title, link, source, published, summary) -> NewsItem:
         source=source,
         published=published,
         summary=html.unescape(summary or "")[:200],
-        relevance=_relevance(txt),
+        relevance=_relevance(txt, keywords),
         sentiment=_sentiment(txt),
-        tags=_tags(txt),
+        tags=_tags(txt, keywords),
     )
 
 
-def _fetch_rss(url: str, name: str) -> List[NewsItem]:
+def _tag_text(block: str, tag: str) -> str:
+    m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", block, re.S | re.I)
+    if not m:
+        return ""
+    # 去掉 CDATA 包裹
+    return re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", m.group(1), flags=re.S).strip()
+
+
+def _extract_regex(content: bytes, name: str, keywords: List[str] = None) -> List[NewsItem]:
+    """XML 不规范（含未转义字符等）时的兜底解析：用正则抽取 item/entry。"""
+    text = content.decode("utf-8", "ignore")
+    items: List[NewsItem] = []
+    blocks = re.findall(r"<item[\s>].*?</item>|<entry[\s>].*?</entry>", text, re.S | re.I)
+    for b in blocks:
+        title = _tag_text(b, "title")
+        link = _tag_text(b, "link")
+        if not link:
+            m = re.search(r"<link[^>]*href=\"([^\"]+)\"", b, re.I)
+            link = m.group(1) if m else ""
+        desc = _tag_text(b, "description") or _tag_text(b, "summary") or _tag_text(b, "content")
+        pub = _tag_text(b, "pubDate") or _tag_text(b, "published") or _tag_text(b, "updated")
+        if title:
+            items.append(_mk(title, link, name, pub, desc, keywords))
+    return items
+
+
+def _fetch_rss(url: str, name: str, keywords: List[str] = None) -> List[NewsItem]:
     items: List[NewsItem] = []
     with httpx.Client(timeout=SOURCE_TIMEOUT, headers={"User-Agent": UA},
                       follow_redirects=True) as c:
         r = c.get(url)
     if r.status_code != 200:
         return items
-    root = ET.fromstring(r.content)
-    for item in root.iter("item"):
-        title = (item.findtext("title") or "").strip()
-        link = (item.findtext("link") or "").strip()
-        desc = (item.findtext("description") or "").strip()
-        pub = item.findtext("pubDate")
-        if title:
-            items.append(_mk(title, link, name, pub, desc))
-    if not items:
-        ns = "{http://www.w3.org/2005/Atom}"
-        for entry in root.iter(ns + "entry"):
-            title = (entry.findtext(ns + "title") or "").strip()
-            link_el = entry.find(ns + "link")
-            link = link_el.get("href") if link_el is not None else ""
-            summary = (entry.findtext(ns + "summary") or "").strip()
-            pub = entry.findtext(ns + "updated")
+    try:
+        root = ET.fromstring(r.content)
+        for item in root.iter("item"):
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            desc = (item.findtext("description") or "").strip()
+            pub = item.findtext("pubDate")
             if title:
-                items.append(_mk(title, link, name, pub, summary))
+                items.append(_mk(title, link, name, pub, desc, keywords))
+        if not items:
+            ns = "{http://www.w3.org/2005/Atom}"
+            for entry in root.iter(ns + "entry"):
+                title = (entry.findtext(ns + "title") or "").strip()
+                link_el = entry.find(ns + "link")
+                link = link_el.get("href") if link_el is not None else ""
+                summary = (entry.findtext(ns + "summary") or "").strip()
+                pub = entry.findtext(ns + "updated")
+                if title:
+                    items.append(_mk(title, link, name, pub, summary, keywords))
+    except ET.ParseError:
+        items = _extract_regex(r.content, name, keywords)
     return items
 
 
-def _fetch_api(url: str, name: str, json_map: Dict[str, str]) -> List[NewsItem]:
+def _fetch_api(url: str, name: str, json_map: Dict[str, str],
+               keywords: List[str] = None) -> List[NewsItem]:
     items: List[NewsItem] = []
     with httpx.Client(timeout=SOURCE_TIMEOUT, headers={"User-Agent": UA},
                       follow_redirects=True) as c:
@@ -189,7 +223,7 @@ def _fetch_api(url: str, name: str, json_map: Dict[str, str]) -> List[NewsItem]:
         desc = str(row.get(json_map.get("summary", "summary"), "") or "")
         pub = row.get(json_map.get("published", "published"))
         if title:
-            items.append(_mk(title, link, name, pub, desc))
+            items.append(_mk(title, link, name, pub, desc, keywords))
     return items
 
 
@@ -199,9 +233,10 @@ def get_news(limit: int = 30) -> NewsList:
     for src in _all_sources()[:6]:
         try:
             if src.get("type") == "api":
-                got = _fetch_api(src["url"], src.get("name", "API"), src.get("json_map", {}))
+                got = _fetch_api(src["url"], src.get("name", "API"),
+                                 src.get("json_map", {}), src.get("keywords"))
             else:
-                got = _fetch_rss(src["url"], src.get("name", "RSS"))
+                got = _fetch_rss(src["url"], src.get("name", "RSS"), src.get("keywords"))
             if got:
                 items.extend(got)
                 ok_sources.append(src.get("name", src["url"]))
