@@ -33,6 +33,8 @@ class FundSummary(BaseModel):
     sparkline: List[float] = []                # 迷你走势（近30点）
     data_source: str = "unknown"               # real / simulated
     held: bool = False                         # 是否已在持仓中
+    provenance: Dict[str, Any] = {}
+    signal: Dict[str, Any] = {}
 
 
 class FundDetail(BaseModel):
@@ -53,6 +55,9 @@ class FundDetail(BaseModel):
     prediction: Dict[str, Any]
     recommendation: Dict[str, Any]
     sentiment: Dict[str, Any]
+    provenance: Dict[str, Any] = {}
+    signal: Dict[str, Any] = {}
+    risk: Dict[str, Any] = {}
 
 
 class NewsItem(BaseModel):
@@ -82,8 +87,8 @@ class AnalysisResult(BaseModel):
     predicted_nav: Optional[float] = None
     predicted_change_pct: Optional[float] = None
     confidence: Optional[float] = None
-    advice: str                # 买入/卖出/加仓/减仓/持有/观望
-    position_action: str       # 加仓/减仓/持有/清仓/建仓
+    advice: str                # 兼容旧字段；新版仅返回“查看分析”
+    position_action: str       # 兼容旧字段；新版不提供仓位建议
     risk_level: str            # 低/中/高
     reasoning: str
     key_news: List[str] = []

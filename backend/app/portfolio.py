@@ -6,12 +6,14 @@
 from typing import List, Dict, Any, Optional
 
 from . import store
+from .db import repository
 
 FILE = "holdings.json"
 
 
 def list_all() -> List[Dict]:
-    data = store.load(FILE, [])
+    repository.migrate_json_once(store.DATA_DIR)
+    data = repository.list_holdings()
     return data if isinstance(data, list) else []
 
 
@@ -29,11 +31,11 @@ def upsert(code: str, shares: float, cost_nav: float, name: str = "") -> Dict:
             h["cost_nav"] = cost_nav
             if name:
                 h["name"] = name
-            store.save(FILE, data)
+            repository.upsert_holding(h)
             return h
     item = {"code": code, "name": name, "shares": shares, "cost_nav": cost_nav}
     data.append(item)
-    store.save(FILE, data)
+    repository.upsert_holding(item)
     return item
 
 
@@ -42,8 +44,7 @@ def remove(code: str) -> bool:
     left = [h for h in data if h["code"] != code]
     if len(left) == len(data):
         return False
-    store.save(FILE, left)
-    return True
+    return repository.delete_holding(code)
 
 
 def compute(nav_map: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:

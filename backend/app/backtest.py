@@ -41,7 +41,10 @@ def _signals_momentum(navs: List[float], window: int) -> List[int]:
 
 
 def run(points: List[NavPoint], strategy: str = "ma_cross", short: int = 5,
-        long: int = 20, fee_bps: float = 15.0) -> Dict[str, Any]:
+        long: int = 20, fee_bps: float = 15.0,
+        management_fee: float = 0.0, subscription_fee: float = 0.0,
+        redemption_fee: float = 0.0, transaction_cost: float = 0.0,
+        _include_gross: bool = True) -> Dict[str, Any]:
     """
     执行回测。
     - strategy: ma_cross（双均线） / momentum（动量） / buy_hold（买入持有）
@@ -67,7 +70,7 @@ def run(points: List[NavPoint], strategy: str = "ma_cross", short: int = 5,
         raw_pos = _signals_ma(navs, short, long)
         strategy_name = f"双均线策略（MA{short}/MA{long}）"
 
-    fee = fee_bps / 10000.0
+    transaction = max(0.0, transaction_cost) + fee_bps / 10000.0
     equity = [1.0]
     pos_series = [0]
     trades: List[Dict[str, Any]] = []
@@ -78,10 +81,12 @@ def run(points: List[NavPoint], strategy: str = "ma_cross", short: int = 5,
     for i in range(1, n):
         target = raw_pos[i - 1]          # 用前一日信号，今日执行
         ret = navs[i] / navs[i - 1] - 1
-        eq = equity[-1] * (1 + ret * holding)
+        daily_management_fee = max(0.0, management_fee) / 252
+        eq = equity[-1] * (1 + ret * holding) * (1 - daily_management_fee)
 
         if target != holding:
-            eq *= (1 - fee)
+            one_time_fee = transaction + (subscription_fee if target == 1 else redemption_fee)
+            eq *= (1 - min(max(one_time_fee, 0.0), 0.99))
             if target == 1:
                 holding = 1
                 entry_price = navs[i]
@@ -126,10 +131,13 @@ def run(points: List[NavPoint], strategy: str = "ma_cross", short: int = 5,
             marks.append({"date": dates[i], "nav": round(navs[i], 4),
                           "type": "buy" if pos_series[i] == 1 else "sell"})
 
-    return {
+    result = {
         "strategy": strategy,
         "strategy_name": strategy_name,
-        "params": {"short": short, "long": long, "fee_bps": fee_bps},
+        "params": {"short": short, "long": long, "fee_bps": fee_bps,
+                   "subscription_fee": subscription_fee, "redemption_fee": redemption_fee,
+                   "management_fee": management_fee, "transaction_cost": transaction_cost,
+                   "execution": "signal_t_execute_t_plus_1"},
         "dates": dates,
         "equity": equity,
         "benchmark": benchmark,
@@ -145,3 +153,14 @@ def run(points: List[NavPoint], strategy: str = "ma_cross", short: int = 5,
         },
         "benchmark_stats": bm,
     }
+    if _include_gross:
+        gross = run(points, strategy=strategy, short=short, long=long, fee_bps=0,
+                    management_fee=0, subscription_fee=0, redemption_fee=0,
+                    transaction_cost=0, _include_gross=False)
+        result["gross_equity"] = gross["equity"]
+        result["gross_return"] = gross["stats"]["total_return"]
+        result["net_return"] = result["stats"]["total_return"]
+        result["strategy_return"] = result["stats"]["total_return"]
+        result["benchmark_return"] = bm["total_return"]
+        result["excess_return"] = result["stats"]["excess_return"]
+    return result

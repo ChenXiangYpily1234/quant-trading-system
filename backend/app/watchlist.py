@@ -6,6 +6,7 @@
 from typing import List, Dict, Optional
 
 from . import config, store, fund_universe
+from .db import repository
 
 FILE = "watchlist.json"
 
@@ -15,10 +16,11 @@ def _default() -> List[Dict]:
 
 
 def list_all() -> List[Dict]:
-    data = store.load(FILE, None)
+    repository.migrate_json_once(store.DATA_DIR)
+    data = repository.list_watchlist()
     if not data or not isinstance(data, list) or not data:
         data = _default()
-        store.save(FILE, data)
+        repository.replace_watchlist(data)
     # 兼容旧数据：补齐字段
     for f in data:
         f.setdefault("focus", False)
@@ -59,7 +61,7 @@ def add(code: str, category: str = None, note: str = None,
         "focus": bool(focus),
     }
     data.append(item)
-    store.save(FILE, data)
+    repository.upsert_watch(item)
     return item
 
 
@@ -68,8 +70,7 @@ def remove(code: str) -> bool:
     left = [f for f in data if f["code"] != code]
     if len(left) == len(data):
         return False
-    store.save(FILE, left)
-    return True
+    return repository.delete_watch(code)
 
 
 def toggle_focus(code: str) -> Optional[bool]:
@@ -77,7 +78,7 @@ def toggle_focus(code: str) -> Optional[bool]:
     for f in data:
         if f["code"] == code:
             f["focus"] = not f.get("focus", False)
-            store.save(FILE, data)
+            repository.upsert_watch(f)
             return f["focus"]
     return None
 
@@ -90,12 +91,12 @@ def update(code: str, category: str = None, note: str = None) -> Optional[Dict]:
                 f["category"] = category
             if note is not None:
                 f["note"] = note
-            store.save(FILE, data)
+            repository.upsert_watch(f)
             return f
     return None
 
 
 def reset() -> List[Dict]:
     data = _default()
-    store.save(FILE, data)
+    repository.replace_watchlist(data)
     return data

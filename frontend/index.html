@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>量化交易系统 · CPO/科技基金监控</title>
-  <link rel="stylesheet" href="/static/css/styles.css" />
+  <title>QuantFlow · 基金投资分析工作台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23163d72'/%3E%3Ctext x='32' y='40' text-anchor='middle' font-size='23' font-family='Arial' font-weight='700' fill='white'%3EQF%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=3" />
   <script src="/static/lib/echarts.min.js"></script>
 </head>
 <body>
   <!-- ============ 顶栏 ============ -->
   <header class="topbar">
-    <div class="brand">📈 量化交易系统<span>CPO / 科技基金 · 监控 预测 决策</span></div>
+    <div class="brand"><span class="brand-mark">QF</span> QuantFlow<span>看清变化，再做决定</span></div>
 
     <div class="search-wrap">
       <input id="fund-search" placeholder="搜索并添加基金：代码 / 名称 / 拼音（如 005844、人工智能、HTCX）" autocomplete="off" />
@@ -33,27 +34,41 @@
 
   <!-- ============ 标签页 ============ -->
   <nav class="tabs" id="tabs">
-    <button data-tab="overview" class="active">监控总览<span class="kbd">1</span></button>
-    <button data-tab="detail">详情分析<span class="kbd">2</span></button>
-    <button data-tab="compare">多基金对比<span class="kbd">3</span></button>
-    <button data-tab="news">新闻中心<span class="kbd">4</span></button>
-    <button data-tab="portfolio">我的持仓<span class="kbd">5</span></button>
-    <button data-tab="backtest">策略回测<span class="kbd">6</span></button>
+    <button data-tab="overview" class="active">首页<span class="kbd">1</span></button>
+    <button data-tab="compare">发现<span class="kbd">2</span></button>
+    <button data-tab="backtest">策略实验室<span class="kbd">3</span></button>
+    <button data-tab="portfolio">我的组合<span class="kbd">4</span></button>
+    <button data-tab="settings">我的<span class="kbd">5</span></button>
   </nav>
 
   <!-- ============ 状态条 ============ -->
   <div class="statusbar">
-    <span class="pill" id="pill-llm">大模型：检测中</span>
+    <span class="pill" id="pill-llm">AI 解释器：检测中</span>
     <span class="pill" id="pill-source">数据源：—</span>
     <span class="pill live" id="pill-update">更新：—</span>
     <span class="pill" id="pill-universe">基金库：—</span>
     <span class="pill clickable" id="pill-reset" title="恢复默认自选列表">恢复默认自选</span>
-    <span class="pill" id="pill-hint" style="margin-left:auto">快捷键：R 刷新 · 1-6 切换页签 · / 搜索</span>
+    <span class="pill" id="pill-hint" style="margin-left:auto">快捷键：R 刷新 · 1-5 切换入口 · / 搜索</span>
   </div>
 
   <div class="wrap">
     <!-- ============ TAB 1 监控总览 ============ -->
     <section class="tab-panel active" id="tab-overview">
+      <div id="dashboard-task-view" class="dashboard-task-view">
+        <div class="dashboard-intro">
+          <div><span class="eyebrow">TODAY / 今日驾驶舱</span><h1>先看组合，再看市场。</h1><p>把需要你关注的变化、风险和基金集中在一个页面。</p></div>
+          <div class="asof" id="qf-asof">正在更新</div>
+        </div>
+        <div class="asset-hero" id="qf-asset"><div class="loading">汇总组合数据</div></div>
+        <div class="task-grid">
+          <section class="task-card task-focus"><div class="task-title">今日重点 <span id="qf-change-count"></span></div><div id="qf-changes" class="task-list"></div></section>
+          <section class="task-card"><div class="task-title">风险提醒</div><div id="qf-risk" class="task-list"></div></section>
+        </div>
+        <div class="task-grid wide-left">
+          <section class="task-card"><div class="task-title">我的关注</div><div id="qf-watchlist"></div></section>
+          <section class="task-card ai-brief"><span class="eyebrow">AI EXPLAINER</span><div class="task-title">今日摘要</div><p id="qf-summary">正在整理真实数据。</p><span class="explain-only">只解释数据 · 不生成买卖指令</span></section>
+        </div>
+      </div>
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">历史净值走势<span class="sub">一眼掌控重点基金长期轨迹（可缩放时间轴）</span></span>
@@ -86,16 +101,16 @@
           <div class="chips" id="ov-filters">
             <span class="chip on" data-f="all">全部</span>
             <span class="chip" data-f="focus">★ 重点</span>
-            <span class="chip" data-f="up">看多</span>
-            <span class="chip" data-f="down">看空</span>
-            <span class="chip" data-f="add">建议加仓</span>
+            <span class="chip" data-f="up">趋势增强</span>
+            <span class="chip" data-f="down">趋势减弱</span>
+            <span class="chip" data-f="risk">高风险</span>
             <span class="chip" data-f="held">已持仓</span>
           </div>
           <select class="sel" id="ov-sort">
             <option value="focus">排序：重点优先</option>
             <option value="day">排序：当日涨幅</option>
             <option value="ret20">排序：20日涨幅</option>
-            <option value="pred">排序：预测幅度</option>
+            <option value="pred">排序：趋势评分</option>
             <option value="conf">排序：置信度</option>
             <option value="name">排序：名称</option>
           </select>
@@ -105,6 +120,16 @@
           </div>
         </div>
         <div id="ov-body"><div class="loading">加载基金数据</div></div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-settings">
+      <div class="settings-shell">
+        <span class="eyebrow">MY QUANTFLOW</span><h1>我的</h1>
+        <div class="panel"><div class="panel-title">偏好与数据边界</div>
+          <p class="settings-copy">主题、刷新频率和价格提醒仍可在顶部管理。QuantFlow 会明确区分 REAL、STALE 与 SIMULATED 数据；模拟数据仅用于界面演示，不会进入信号、回测或组合调整。</p>
+          <button class="btn" id="settings-open-news">管理新闻源</button>
+        </div>
       </div>
     </section>
 
@@ -124,7 +149,7 @@
             <span class="chip on" data-i="ma20">MA20</span>
             <span class="chip" data-i="ma60">MA60</span>
             <span class="chip" data-i="boll">BOLL</span>
-            <span class="chip on" data-i="pred">预测带</span>
+            <span class="chip on" data-i="pred">趋势参考带</span>
           </div>
           <select class="sel" id="dt-sub">
             <option value="macd">副图：MACD</option>
@@ -133,7 +158,7 @@
             <option value="none">副图：无</option>
           </select>
           <div class="spacer"></div>
-          <button class="btn sm" id="dt-ai">🤖 重新研判</button>
+          <button class="btn sm" id="dt-ai">更新 AI 解释</button>
           <button class="btn sm" id="dt-hold">＋ 加入持仓</button>
           <button class="btn sm" id="dt-csv">⬇ 导出CSV</button>
           <button class="btn sm" id="dt-fs">⛶ 全屏</button>
@@ -147,7 +172,7 @@
           <div class="kpi-strip" id="dt-kpis"></div>
         </div>
         <div class="panel">
-          <div class="panel-title" style="margin-bottom:10px">研判与操作建议</div>
+          <div class="panel-title" style="margin-bottom:10px">趋势、风险与 AI 解读</div>
           <div id="dt-analysis"></div>
         </div>
       </div>
@@ -401,12 +426,13 @@
     </section>
 
     <div class="disclaimer">
-      本系统的预测与建议由技术指标、新闻情感与模型研判生成，仅供研究参考，<b>不构成投资建议</b>。基金投资有风险，决策请独立判断。
+      本系统以确定性信号与风险指标提供研究信息，AI 仅负责解释，<b>不构成投资建议</b>。基金投资有风险，决策请独立判断。
     </div>
   </div>
 
   <div id="layer"></div>
   <div class="toast" id="toast"></div>
-  <script src="/static/js/app.js"></script>
+  <script type="module" src="/static/js/dashboard.js?v=3"></script>
+  <script type="module" src="/static/js/app.js?v=3"></script>
 </body>
 </html>

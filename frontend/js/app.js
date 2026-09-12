@@ -42,11 +42,12 @@ const fmt = (v, d = 4) => (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d)
 const pct = (v, d = 2) => (v == null || isNaN(v)) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(d) + '%';
 const colorFor = (v) => v > 0 ? C().up : (v < 0 ? C().down : C().muted);
 const num = (v) => (v == null || isNaN(v)) ? -Infinity : Number(v);
+const isReal = (v) => String(v || '').toUpperCase() === 'REAL';
 
 function dirBadge(dir) {
-  if (dir === 'up') return '<span class="badge up">看多 ↗</span>';
-  if (dir === 'down') return '<span class="badge down">看空 ↘</span>';
-  return '<span class="badge flat">震荡 →</span>';
+  if (dir === 'up') return '<span class="badge up">趋势增强 ↗</span>';
+  if (dir === 'down') return '<span class="badge down">趋势减弱 ↘</span>';
+  return '<span class="badge flat">趋势中性 →</span>';
 }
 
 // 估值温度配色：低估(冷)蓝 · 适中灰 · 高估(热)红
@@ -141,10 +142,10 @@ async function loadHealth() {
   try {
     const h = await api('/api/health');
     S.health = h;
-    $('pill-llm').textContent = '决策引擎：' + (h.llm_enabled ? `大模型 ${h.llm_model}` : '规则引擎(内置)');
+    $('pill-llm').textContent = 'AI 解释器：' + (h.llm_enabled ? `大模型 ${h.llm_model}` : '确定性模板');
     $('pill-llm').className = 'pill ' + (h.llm_enabled ? 'real' : 'sim');
     $('pill-universe').textContent = `基金库：${(h.universe_size || 0).toLocaleString()} 只可搜索`;
-  } catch (e) { $('pill-llm').textContent = '决策引擎：离线'; }
+  } catch (e) { $('pill-llm').textContent = 'AI 解释器：离线'; }
 }
 
 /* =========================================================
@@ -157,12 +158,13 @@ async function loadFunds(silent) {
   checkAlerts();
   renderOverview();
   syncFundSelectors();
-  const anyReal = S.funds.some(f => f.data_source === 'real');
-  const anySim = S.funds.some(f => f.data_source !== 'real');
+  const anyReal = S.funds.some(f => isReal(f.data_source));
+  const anySim = S.funds.some(f => !isReal(f.data_source));
   const p = $('pill-source');
   p.textContent = '数据源：' + (anyReal && !anySim ? '真实净值' : (!anyReal ? '模拟(降级)' : '真实+模拟'));
   p.className = 'pill ' + (anySim ? 'sim' : 'real');
   $('pill-update').textContent = '更新：' + new Date().toLocaleTimeString('zh-CN');
+  if (typeof window.loadQuantFlowDashboard === 'function') window.loadQuantFlowDashboard();
   buildTrendChips();
   if (!S.trend.loaded) loadTrend();
 }
@@ -276,7 +278,7 @@ function filteredFunds() {
   if (f === 'focus') list = list.filter(x => x.focus);
   else if (f === 'up') list = list.filter(x => x.direction === 'up');
   else if (f === 'down') list = list.filter(x => x.direction === 'down');
-  else if (f === 'add') list = list.filter(x => (x.advice || '').includes('加仓') || (x.advice || '').includes('买入'));
+  else if (f === 'risk') list = list.filter(x => (x.signal?.risk_score || 0) >= 67);
   else if (f === 'held') list = list.filter(x => x.held);
 
   const s = S.ov.sort;
@@ -284,7 +286,7 @@ function filteredFunds() {
     focus: (a, b) => (b.focus - a.focus) || (num(b.day_change_pct) - num(a.day_change_pct)),
     day: (a, b) => num(b.day_change_pct) - num(a.day_change_pct),
     ret20: (a, b) => num(b.return_20d) - num(a.return_20d),
-    pred: (a, b) => num(b.predicted_change_pct) - num(a.predicted_change_pct),
+    pred: (a, b) => num(b.signal?.trend_score) - num(a.signal?.trend_score),
     conf: (a, b) => num(b.confidence) - num(a.confidence),
     name: (a, b) => a.name.localeCompare(b.name, 'zh'),
   }[s];
@@ -297,14 +299,14 @@ function renderKpis() {
   const down = fs.filter(f => f.direction === 'down').length;
   const avgConf = fs.length ? fs.reduce((a, b) => a + (b.confidence || 0), 0) / fs.length : 0;
   const avgDay = fs.length ? fs.reduce((a, b) => a + (b.day_change_pct || 0), 0) / fs.length : 0;
-  const advCount = fs.filter(f => (f.advice || '').includes('加仓') || (f.advice || '').includes('买入')).length;
-  const real = fs.filter(f => f.data_source === 'real').length;
+  const riskCount = fs.filter(f => (f.signal?.risk_score || 0) >= 67).length;
+  const real = fs.filter(f => isReal(f.data_source)).length;
   const items = [
     { k: '监控基金', v: fs.length, f: 'all' },
     { k: '平均当日涨跌', v: pct(avgDay), col: colorFor(avgDay), f: 'all' },
-    { k: '看多', v: up, col: C().up, f: 'up' },
-    { k: '看空', v: down, col: C().down, f: 'down' },
-    { k: '建议加仓', v: advCount, col: C().accent, f: 'add' },
+    { k: '趋势增强', v: up, col: C().up, f: 'up' },
+    { k: '趋势减弱', v: down, col: C().down, f: 'down' },
+    { k: '高风险', v: riskCount, col: C().warn, f: 'risk' },
     { k: '平均置信度', v: Math.round(avgConf * 100) + '%', f: 'all' },
     { k: '真实数据源', v: `${real}/${fs.length}`, f: 'all' },
     { k: '重点关注', v: fs.filter(f => f.focus).length, col: C().up, f: 'focus' },
@@ -327,17 +329,17 @@ function fundCardHtml(f) {
       ${f.focus ? '<span class="focus-badge">★重点</span>' : ''}
       ${f.held ? '<span class="held-badge">持仓中</span>' : ''}</div>
     <div class="name" title="${esc(f.name)}">${esc(f.name)}</div>
-    <div class="code"><span class="dot ${f.data_source === 'real' ? 'real' : 'sim'}"></span> ${f.code} · ${f.latest_date || '—'}</div>
+    <div class="code"><span class="dot ${isReal(f.data_source) ? 'real' : 'sim'}"></span> ${f.code} · ${f.latest_date || '—'}</div>
     <div class="nav-row">
       <span class="nav">${fmt(f.latest_nav)}</span>
       <span class="chg" style="color:${colorFor(f.day_change_pct)}">${pct(f.day_change_pct)}</span>
     </div>
-    <div class="est">盘中模拟估值 ${fmt(f.estimate_nav)} <span style="color:${estCol}">${pct(f.estimate_change_pct)}</span>
+    <div class="est">盘中参考估值 ${fmt(f.estimate_nav)} <span style="color:${estCol}">${pct(f.estimate_change_pct)}</span>
       · 20日 <span style="color:${colorFor(f.return_20d)}">${pct(f.return_20d)}</span></div>
     ${sparkSvg(f.sparkline)}
     <div class="foot">
       ${dirBadge(f.direction)}
-      <span class="advice-chip">${esc(f.advice || '—')}</span>
+      <span class="advice-chip">评分 ${f.signal?.overall_score == null ? '—' : Math.round(f.signal.overall_score)}/100</span>
       ${f.valuation ? `<span class="val-badge" style="color:${valColor(f.valuation.label)};border-color:${valColor(f.valuation.label)}">估值·${esc(f.valuation.label)} ${f.valuation.temp}</span>` : ''}
       <span class="conf" style="margin-left:auto">置信 ${Math.round((f.confidence || 0) * 100)}%</span>
     </div>
@@ -349,7 +351,7 @@ const TABLE_COLS = [
   { k: 'latest_nav', t: '最新净值' },
   { k: 'day_change_pct', t: '当日' },
   { k: 'return_20d', t: '近20日' },
-  { k: 'predicted_change_pct', t: '预测5日' },
+  { k: 'signal', t: '趋势评分', nosort: true },
   { k: 'confidence', t: '置信度' },
   { k: 'advice', t: '建议', nosort: true },
   { k: 'position_action', t: '仓位动作', nosort: true },
@@ -376,7 +378,7 @@ function renderTable(list) {
     <td>${fmt(f.latest_nav)}</td>
     <td style="color:${colorFor(f.day_change_pct)}">${pct(f.day_change_pct)}</td>
     <td style="color:${colorFor(f.return_20d)}">${pct(f.return_20d)}</td>
-    <td style="color:${colorFor(f.predicted_change_pct)}">${pct(f.predicted_change_pct)}</td>
+    <td>${f.signal?.trend_score == null ? '—' : Math.round(f.signal.trend_score) + '/100'}</td>
     <td>${Math.round((f.confidence || 0) * 100)}%</td>
     <td><span class="advice-chip">${esc(f.advice || '—')}</span></td>
     <td>${esc(f.position_action || '—')}</td>
@@ -654,16 +656,14 @@ function renderAnalysis(rec, d) {
     <div class="analysis">
       <div class="row"><span class="label">基金</span><span class="val"><b>${esc(d.name)}</b>（${d.code}）· ${esc(d.category)}
         ${d.focus ? '<span class="focus-badge">★重点</span>' : ''}
-        <span class="tag ${d.data_source === 'real' ? 'pos' : 'neu'}">${d.data_source === 'real' ? '真实净值' : '模拟数据'}</span>
+        <span class="tag ${isReal(d.data_source) ? 'pos' : 'neu'}">${isReal(d.data_source) ? '真实净值' : '模拟数据仅供演示'}</span>
         <span class="hint">最新净值日 ${d.latest_date || '—'} · 样本 ${d.days} 交易日</span></span></div>
-      <div class="row"><span class="label">研判引擎</span><span class="val"><span class="engine-tag">${rec.engine === 'llm' ? '大模型 LLM' : '规则引擎(内置)'}</span>
+      <div class="row"><span class="label">解释引擎</span><span class="val"><span class="engine-tag">${rec.engine === 'llm' ? '大模型解释器' : '确定性解释模板'}</span>
         <span class="hint">生成于 ${esc(rec.generated_at || '')}</span></span></div>
-      <div class="row"><span class="label">走势预测</span><span class="val">${esc(rec.trend_prediction)}${d.valuation ? ` · <b style="color:${valColor(d.valuation.label)}">估值·${esc(d.valuation.label)}</b>（温度 ${d.valuation.temp}，净值处历史 ${d.valuation.nav_pct_rank}% 分位，相对长期均线 ${d.valuation.ma_ratio})` : ''}
+      <div class="row"><span class="label">趋势状态</span><span class="val">${esc(rec.trend_prediction)}${d.valuation ? ` · <b style="color:${valColor(d.valuation.label)}">估值·${esc(d.valuation.label)}</b>（温度 ${d.valuation.temp}，净值处历史 ${d.valuation.nav_pct_rank}% 分位，相对长期均线 ${d.valuation.ma_ratio})` : ''}
         ${rec.predicted_nav ? ` · 目标净值 <b>${fmt(rec.predicted_nav)}</b> (<span style="color:${colorFor(rec.predicted_change_pct)}">${pct(rec.predicted_change_pct)}</span>)` : ''}
         · 置信 <b>${Math.round((rec.confidence || 0) * 100)}%</b></span></div>
-      <div class="row"><span class="label">操作建议</span><span class="val">
-        <b style="color:${C().accent};font-size:14px">${esc(rec.advice)}</b>
-        ｜ 仓位动作：<b>${esc(rec.position_action)}</b> ｜ 风险等级：<b style="color:${rec.risk_level === '高' ? C().up : ''}">${esc(rec.risk_level)}</b></span></div>
+      <div class="row"><span class="label">风险状态</span><span class="val">风险等级：<b style="color:${rec.risk_level === '高' ? C().warn : ''}">${esc(rec.risk_level)}</b> ｜ 趋势评分：<b>${d.signal?.trend_score == null ? '—' : Math.round(d.signal.trend_score) + '/100'}</b> ｜ 置信度：<b>${Math.round((rec.confidence || 0) * 100)}%</b></span></div>
       <div class="row"><span class="label">分析依据</span><span class="val">${esc(rec.reasoning)}</span></div>
       <div class="row"><span class="label">新闻情绪</span><span class="val">均值 <b style="color:${colorFor(d.sentiment.avg_sentiment)}">${d.sentiment.avg_sentiment}</b>
         · 利好 ${d.sentiment.pos} 条 / 利空 ${d.sentiment.neg} 条（样本 ${d.sentiment.count}）
@@ -1283,7 +1283,7 @@ $('fund-search').addEventListener('input', (e) => {
   if (!q) { $('suggest').classList.remove('show'); return; }
   sgTimer = setTimeout(async () => {
     try {
-      const d = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=14');
+      const d = await api('/api/funds/search?q=' + encodeURIComponent(q) + '&limit=14');
       sgList = d.results; sgIdx = -1;
       $('suggest').innerHTML = d.results.length ? d.results.map((r, i) => `
         <div class="suggest-item" data-i="${i}">
@@ -1317,7 +1317,7 @@ $('suggest').addEventListener('click', async (e) => {
     const res = await api('/api/funds', { method: 'POST', body: { code: r.code } });
     await loadFunds(true);
     S.selected = r.code;
-    toast(`已添加「${r.name}」· ${res.data_source === 'real' ? '真实净值' : '模拟数据'} ${res.points} 条`, 'ok');
+    toast(`已添加「${r.name}」· ${isReal(res.data_source) ? '真实净值' : '模拟数据仅供演示'} ${res.points} 条`, 'ok');
     setTab('overview');
   } catch (err) { toast(err.message, 'err'); }
 });
@@ -1446,6 +1446,8 @@ function setTab(name) {
   }
   setTimeout(() => Object.values(CH).forEach(c => c.resize()), 60);
 }
+document.addEventListener('qf-open-fund', (event) => { S.selected = event.detail.code; setTab('detail'); });
+$('settings-open-news').onclick = () => setTab('news');
 $('tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   setTab(b.dataset.tab);
@@ -1501,8 +1503,8 @@ $('btn-theme').onclick = () => {
 
 document.addEventListener('keydown', (e) => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
-  const tabs = ['overview', 'detail', 'compare', 'news', 'portfolio', 'backtest'];
-  if (e.key >= '1' && e.key <= '6') setTab(tabs[+e.key - 1]);
+  const tabs = ['overview', 'compare', 'backtest', 'portfolio', 'settings'];
+  if (e.key >= '1' && e.key <= '5') setTab(tabs[+e.key - 1]);
   else if (e.key.toLowerCase() === 'r') $('btn-refresh').click();
   else if (e.key === '/') { e.preventDefault(); $('fund-search').focus(); }
   else if (e.key === 'Escape') closeLayer();
@@ -1516,6 +1518,7 @@ window.addEventListener('resize', () => Object.values(CH).forEach(c => c.resize(
   wireTrend();
   await loadHealth();
   await loadFunds();
+  if (typeof window.loadQuantFlowDashboard === 'function') await window.loadQuantFlowDashboard();
   startTimer();
   toast('系统就绪：点击卡片查看详情，顶部搜索可添加任意基金', 'ok');
 })();

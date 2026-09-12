@@ -129,12 +129,12 @@ def simulate_nav(code: str, days: int = 120) -> List[NavPoint]:
 
 def get_nav(code: str, days: int = 120) -> Tuple[List[NavPoint], str]:
     """获取净值：优先真实，失败降级模拟。返回 (points, source)。"""
+    real = fetch_nav_real(code, days)
+    if real and len(real) >= 5:
+        return real, "REAL"
     if config.ALLOW_SIMULATED_DATA:
-        real = fetch_nav_real(code, days)
-        if real and len(real) >= 5:
-            return real, "real"
-    # 降级
-    return simulate_nav(code, days), "simulated"
+        return simulate_nav(code, days), "SIMULATED"
+    return [], "STALE"
 
 
 def intraday_estimate(code: str, latest_nav: float, source: str) -> Tuple[float, float]:

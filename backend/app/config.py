@@ -11,7 +11,7 @@ from typing import List, Dict
 # code: 天天基金/东方财富基金代码
 # category: 主题分类，用于聚合与筛选
 # 这些为真实存在的基金代码，系统会尝试抓取其实时净值；
-# 若抓取失败，则自动降级为确定性模拟数据并标注。
+# 若抓取失败，可为演示生成确定性模拟数据，但模拟数据不得进入信号、回测或调仓。
 # focus=True 的基金为「重点关注」基金，会在仪表盘置顶并标记「重点」徽章。
 # 当前重点：东方人工智能主题混合A(005844) 与 红土创新新科技股票(006265)，
 # 二者均重仓 AI/CPO 产业链（中际旭创、新易盛、天孚通信等）。
@@ -78,3 +78,10 @@ LLM_COOLDOWN_SECONDS = int(os.getenv("LLM_COOLDOWN", "300"))  # LLM 接口不可
 
 # 是否允许在无法获取真实数据时生成模拟数据
 ALLOW_SIMULATED_DATA = os.getenv("ALLOW_SIM", "true").lower() == "true"
+
+# 回测费用（均为年率或单次交易费率，接口可覆盖单次交易成本）
+SUBSCRIPTION_FEE = float(os.getenv("SUBSCRIPTION_FEE", "0.0015"))
+REDEMPTION_FEE = float(os.getenv("REDEMPTION_FEE", "0.005"))
+MANAGEMENT_FEE = float(os.getenv("MANAGEMENT_FEE", "0.006"))
+TRANSACTION_COST = float(os.getenv("TRANSACTION_COST", "0.0005"))
+SIGNAL_VERSION = "signal-v1"
