@@ -8,6 +8,36 @@ The stack remains FastAPI + SQLite + Vanilla JavaScript + ECharts.
 > probabilities or return promises. The LLM explains validated inputs and never
 > decides BUY, SELL, or position size.
 
+## Optional QuantFlow research agent (experimental)
+
+The original dashboard and APIs start without Codex. A separate research
+gateway can launch Codex App Server over stdio and expose only validated
+QuantFlow tool schemas. It does not permit real trading, production strategy
+updates, holding mutations, arbitrary SQL, or an agent-side financial formula.
+
+The gateway is disabled by default. For local, trusted testing set
+`QUANTFLOW_AGENT_ENABLE=true` and a private `QUANTFLOW_AGENT_TOKEN` in the
+backend environment. `QUANTFLOW_CODEX_BIN` may point to a compatible Codex
+binary; on macOS the bundled Codex desktop binary is preferred when present.
+Do not put the token in frontend JavaScript or expose this API publicly without
+an authenticated user session and an independently verified process sandbox.
+
+- `GET /api/agent/health` reports configuration and current-process status.
+- `POST /api/agent/threads` creates an ephemeral research thread.
+- `POST /api/agent/threads/{thread_id}/turns` accepts `prompt`, `page`, optional
+  `fund_code`, and a research `skill`.
+- `GET /api/agent/threads/{thread_id}/events?after=0` returns bounded public
+  tool/final events; send `X-QuantFlow-Agent-Token` on protected routes.
+- `POST /api/agent/threads/{thread_id}/turns/{turn_id}/cancel` interrupts a turn.
+
+The agent can run scoped read tools, backtest computations/audits, and create
+experiment drafts. It cannot yet execute arbitrary candidate formulas or a
+historical news-sentiment experiment. Historical news availability, frozen
+dataset/universe versions, out-of-sample workflow, approval UI, and production
+authentication remain unimplemented. A Red Team result marks these dimensions
+unverified rather than treating them as a pass. See
+`docs/agent-native-migration.md` for the source audit and phase status.
+
 ---
 
 ## ✨ Features

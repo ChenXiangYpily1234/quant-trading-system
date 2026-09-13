@@ -24,6 +24,7 @@ from .risk.metrics import calculate_metrics
 from .risk.portfolio import portfolio_risk
 from .ai.summary import dashboard_summary
 from .core.logging import event as log_event
+from .agent.gateway import router as agent_router, shutdown_runtime
 from .schemas import (
     FundSummary, FundDetail, NewsList, AnalysisResult,
     AddFundRequest, HoldingRequest,
@@ -43,9 +44,11 @@ async def lifespan(_: FastAPI):
         warm_task.cancel()
         refresh_task.cancel()
         await asyncio.gather(warm_task, refresh_task, return_exceptions=True)
+        await shutdown_runtime()
 
 
 app = FastAPI(title="QuantFlow · 基金投资分析工作台", version="3.0.0", lifespan=lifespan)
+app.include_router(agent_router)
 
 
 @app.middleware("http")
@@ -129,7 +132,8 @@ def build_state(code: str, meta: Dict[str, str], news_list: NewsList,
     source = entry["source"]
     sentiment = predictor.aggregate_news_sentiment(news_list.items)
     navs = [p.nav for p in points]
-    signal = compute_signal(navs, [n.sentiment for n in news_list.items if n.relevance > 0], source)
+    # 新闻发布时间尚未完成 NAV 日期可用性对齐；研究信号统一使用中性情绪。
+    signal = compute_signal(navs, [], source)
     risk = calculate_metrics(navs) if permits_research(source) else {"status": "blocked_simulated_data"}
     if risk.get("status") == "ok":
         risk_score = signal.risk_score or 0
@@ -142,7 +146,7 @@ def build_state(code: str, meta: Dict[str, str], news_list: NewsList,
                 "predicted_nav": None, "future_dates": [], "future_nav": [],
                 "future_upper": [], "future_lower": [], "indicators": predictor.compute_indicators(points),
                 "rationale": "模拟数据仅供界面演示，不生成研究信号。"}
-    pred["signal"] = signal.dict()
+    pred["signal"] = signal.model_dump()
     pred["risk"] = risk
     rec = llm.analyze(code, meta["name"], pred, news_list.items)
     est, est_chg = fund_data.intraday_estimate(code, pred["indicators"]["latest_nav"], source)
@@ -150,7 +154,7 @@ def build_state(code: str, meta: Dict[str, str], news_list: NewsList,
     state = {
         "points": points, "source": source, "sentiment": sentiment,
         "pred": pred, "rec": rec, "estimate": est, "estimate_change": est_chg,
-        "latest": latest, "signal": signal.dict(), "risk": risk,
+        "latest": latest, "signal": signal.model_dump(), "risk": risk,
         "provenance": entry["provenance"],
     }
     _state_cache[key] = {"state": state, "updated": now}

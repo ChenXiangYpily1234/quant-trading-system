@@ -28,4 +28,42 @@ def initialize() -> None:
         CREATE TABLE IF NOT EXISTS alerts (
           id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, payload TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS experiments (
+          experiment_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+          hypothesis TEXT NOT NULL, research_question TEXT NOT NULL,
+          baseline TEXT NOT NULL, candidate TEXT NOT NULL,
+          train_period TEXT NOT NULL, validation_period TEXT NOT NULL,
+          test_period TEXT NOT NULL, benchmark TEXT NOT NULL,
+          strategy_version TEXT, dataset_version TEXT, parameters TEXT NOT NULL,
+          metrics TEXT NOT NULL, agent_thread_id TEXT,
+          status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected','inconclusive')),
+          conclusion TEXT NOT NULL, warnings TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS experiment_runs (
+          run_id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id),
+          created_at TEXT NOT NULL, role TEXT NOT NULL, result TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS strategy_versions (
+          version TEXT PRIMARY KEY, parent_version TEXT NOT NULL,
+          change_description TEXT NOT NULL, experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id),
+          created_by TEXT NOT NULL, created_at TEXT NOT NULL, metrics TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status = 'candidate')
+        );
+        CREATE TABLE IF NOT EXISTS dataset_versions (
+          version TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+          source TEXT NOT NULL, manifest TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS agent_runs (
+          run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, turn_id TEXT NOT NULL,
+          skill TEXT, tools_called TEXT NOT NULL, tool_inputs TEXT NOT NULL,
+          tool_outputs TEXT NOT NULL, approval_id TEXT, duration_ms INTEGER,
+          final_result TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS approvals (
+          approval_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+          action TEXT NOT NULL, risk_level TEXT NOT NULL,
+          reason TEXT NOT NULL, diff TEXT NOT NULL, requested_by TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status = 'pending'),
+          experiment_id TEXT REFERENCES experiments(experiment_id)
+        );
         """)
